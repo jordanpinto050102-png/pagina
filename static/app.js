@@ -91,7 +91,7 @@ const MANTTO_ITEM_KEYS = {
 
 const MANTTO_INVENTORY_TABLES = ["productos", "repuestos"];
 
-const MANTTO_CATEGORIAS_REPUESTOS = [
+const MANTTO_CATEGORIAS_BASE_REPUESTOS = [
   { id: "todas", nombre: "Todas", icono: "▦", imagen: "/static/assets/categorias/todas.png" },
   { id: "rodamientos", nombre: "Rodamientos", icono: "⚙", imagen: "/static/assets/categorias/rodamientos.png", palabras: ["rodamiento", "bearing", "chumacera"] },
   { id: "sensores", nombre: "Sensores", icono: "◉", imagen: "/static/assets/categorias/sensores.png", palabras: ["sensor", "inductivo", "fotoelectrico", "fotocelula", "proximidad"] },
@@ -107,11 +107,72 @@ const MANTTO_CATEGORIAS_REPUESTOS = [
 ];
 
 function manttoWarehouse3dUrl(embedded = false) {
-  const file = "warehouse3d_v68/warehouse3d.html";
-  const query = embedded ? "?embedded=1&v=69" : "?v=69";
+  const file = "warehouse3d_v73/warehouse3d.html";
+  const query = embedded ? "?embedded=1&v=73" : "?v=73";
   const match = window.location.pathname.match(/^\/networks\/([^/]+)\//);
   if (match) return `/networks/${match[1]}/${file}${query}`;
   return `/static/${file}${query}`;
+}
+
+function customCategoriaMap() {
+  try {
+    return JSON.parse(localStorage.getItem("mantto_categorias_custom") || "{}");
+  } catch (err) {
+    return {};
+  }
+}
+
+function saveCustomCategoriaMap(map) {
+  localStorage.setItem("mantto_categorias_custom", JSON.stringify(map || {}));
+}
+
+function slugCategoria(value) {
+  return normalizeText(value || "categoria")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    || `categoria_${Date.now()}`;
+}
+
+function categoriasRepuestos() {
+  const custom = Object.values(customCategoriaMap()).map((cat) => ({
+    id: cat.id,
+    nombre: cat.nombre,
+    icono: cat.icono || "+",
+    imagen: cat.imagen || "",
+    palabras: cat.palabras || [],
+    custom: true,
+  }));
+  return [
+    MANTTO_CATEGORIAS_BASE_REPUESTOS[0],
+    ...MANTTO_CATEGORIAS_BASE_REPUESTOS.slice(1, -1),
+    ...custom.sort((a, b) => a.nombre.localeCompare(b.nombre, "es")),
+    MANTTO_CATEGORIAS_BASE_REPUESTOS[MANTTO_CATEGORIAS_BASE_REPUESTOS.length - 1],
+  ];
+}
+
+function addCustomCategoria(nombre, imagen = "") {
+  const cleanName = String(nombre || "").trim();
+  if (!cleanName) return "";
+  const existing = categoriaByName(cleanName);
+  if (existing && !["sin_categorizar", "todas"].includes(existing.id)) return existing.id;
+  const map = customCategoriaMap();
+  let id = slugCategoria(cleanName);
+  if (["todas", "sin_categorizar"].includes(id)) id = `cat_${id}`;
+  let suffix = 2;
+  const usedIds = new Set(categoriasRepuestos().map((cat) => cat.id));
+  while (usedIds.has(id) || map[id]) {
+    id = `${slugCategoria(cleanName)}_${suffix}`;
+    suffix += 1;
+  }
+  map[id] = {
+    id,
+    nombre: cleanName,
+    icono: "+",
+    imagen: String(imagen || "").trim(),
+    palabras: [],
+  };
+  saveCustomCategoriaMap(map);
+  return id;
 }
 
 function categoriaManualMap() {
@@ -547,7 +608,10 @@ function ensureManttoV46Ui() {
     </div>
     <div class="accepted-wms-layout">
       <section class="accepted-wms-stage">
-        <iframe id="pedidosAceptadosWarehouseFrame" title="Almacen 3D de peticiones aceptadas" src="${manttoWarehouse3dUrl(true)}"></iframe>
+        <iframe id="pedidosAceptadosWarehouseFrame" class="warehouse3d-frame" title="Almacen 3D de peticiones aceptadas" src="${manttoWarehouse3dUrl(true)}" loading="eager" allow="fullscreen" style="width:100%;height:720px;min-height:720px;border:0;display:block;background:#dbeafe;"></iframe>
+        <div class="warehouse3d-open-direct">
+          <a href="${manttoWarehouse3dUrl(false)}" target="_blank" rel="noopener">Abrir 3D directo</a>
+        </div>
       </section>
       <aside class="accepted-wms-side">
         <div class="accepted-wms-tools">
@@ -568,7 +632,7 @@ function ensureManttoV46Ui() {
       <button class="back-btn" data-view="pedidosAceptados">Volver a pedidos</button>
     </div>
     <div class="warehouse3d-shell">
-      <iframe id="warehouse3dFrame" title="Almacen 3D" src="${manttoWarehouse3dUrl(false)}"></iframe>
+      <iframe id="warehouse3dFrame" class="warehouse3d-frame" title="Almacen 3D" src="${manttoWarehouse3dUrl(false)}" loading="eager" allow="fullscreen" style="width:100%;height:720px;min-height:720px;border:0;display:block;background:#dbeafe;"></iframe>
     </div>
   `);
   ensurePanel("ingresoItem", `
@@ -1336,12 +1400,12 @@ function inventoryRows() {
 }
 
 function categoriaById(id) {
-  return MANTTO_CATEGORIAS_REPUESTOS.find((cat) => cat.id === id) || MANTTO_CATEGORIAS_REPUESTOS[MANTTO_CATEGORIAS_REPUESTOS.length - 1];
+  return categoriasRepuestos().find((cat) => cat.id === id) || categoriasRepuestos()[categoriasRepuestos().length - 1];
 }
 
 function categoriaByName(nombre) {
   const normalized = normalizeText(nombre);
-  return MANTTO_CATEGORIAS_REPUESTOS.find((cat) => normalizeText(cat.nombre) === normalized || cat.id === normalized)
+  return categoriasRepuestos().find((cat) => normalizeText(cat.nombre) === normalized || cat.id === normalized)
     || categoriaById("sin_categorizar");
 }
 
@@ -1352,7 +1416,7 @@ function categorizarRepuesto(row) {
   const existing = itemValue(row, "categoria");
   if (existing) return existing;
   const text = normalizeText(`${codigo} ${itemValue(row, "descripcion")} ${itemValue(row, "modelo")}`);
-  for (const categoria of MANTTO_CATEGORIAS_REPUESTOS) {
+  for (const categoria of categoriasRepuestos()) {
     if (["todas", "sin_categorizar"].includes(categoria.id)) continue;
     if ((categoria.palabras || []).some((word) => text.includes(normalizeText(word)))) return categoria.nombre;
   }
@@ -1375,9 +1439,19 @@ function guardarCategoria(codigo, categoriaId) {
   saveCategoriaManualMap(map);
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) return resolve("");
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("No se pudo leer la imagen"));
+    reader.readAsDataURL(file);
+  });
+}
+
 function contarCategorias(rows = inventoryRows()) {
   const counts = new Map();
-  MANTTO_CATEGORIAS_REPUESTOS.forEach((cat) => counts.set(cat.id, 0));
+  categoriasRepuestos().forEach((cat) => counts.set(cat.id, 0));
   rows.forEach((row) => {
     counts.set(row.categoria_id || "sin_categorizar", (counts.get(row.categoria_id || "sin_categorizar") || 0) + 1);
   });
@@ -1538,7 +1612,7 @@ function ensureAvisoImageInput() {
 }
 
 function equipmentServiceValue(row) {
-  return equipoValue(row, "estado") || row?.tipo_servicio || row?.interno_externo || row?.origen || "";
+  return row?.tipo_servicio || row?.interno_externo || row?.origen || equipoValue(row, "estado") || "";
 }
 
 function uniqueEquipmentServiceValues(rows) {
@@ -1561,6 +1635,19 @@ function normalizeText(value) {
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
+}
+
+function isDeletedRow(row) {
+  const values = [
+    row?.estado,
+    row?.status,
+    row?.active === false || row?.active === 0 ? "eliminado" : "",
+    row?.eliminado,
+    row?.deleted,
+    row?.deleted_at,
+    row?.eliminado_en,
+  ].map(normalizeText);
+  return values.some((value) => ["eliminado", "eliminada", "cancelado", "cancelada", "deleted", "inactivo", "inactive", "true", "1"].includes(value));
 }
 
 function sameText(a, b) {
@@ -2015,6 +2102,7 @@ function applySelectedEquipment(scope, equipo, rerender = true) {
   st.filters = {
     sede: equipoValue(equipo, "sede"),
     estado: equipoValue(equipo, "estado"),
+    tipo_servicio: equipmentServiceValue(equipo),
     ubicacion: equipoValue(equipo, "ubicacion"),
     proceso: equipoValue(equipo, "proceso"),
     sistema: equipoValue(equipo, "sistema"),
@@ -2026,6 +2114,7 @@ function applySelectedEquipment(scope, equipo, rerender = true) {
 
   const form = scope === "aviso" ? $("avisoForm") : scope === "avisoAtender" ? $("avisoOtForm") : $("otForm");
   setFormValue(form, "sede", st.filters.sede);
+  setFormValue(form, "tipo_servicio", st.filters.tipo_servicio);
   setFormValue(form, "rubro", equipoValue(equipo, "rubro"));
   setFormValue(form, "ubicacion", st.filters.ubicacion);
   setFormValue(form, "proceso", st.filters.proceso);
@@ -3637,7 +3726,7 @@ function ensureAlmacenCategoryFilter(counts) {
   }
   filter.innerHTML = `
     <div class="almacen-category-quick-grid">
-      ${MANTTO_CATEGORIAS_REPUESTOS.map((cat) => `
+      ${categoriasRepuestos().map((cat) => `
         <button type="button" class="almacen-category-chip ${state.almacenCategoria === cat.id ? "active" : ""}" onclick="seleccionarCategoriaAlmacen('${escapeJs(cat.id)}')">
           <span class="category-image" style="background-image:url('${escapeHtml(cat.imagen)}')"><i>${escapeHtml(cat.icono)}</i></span>
           <strong>${escapeHtml(cat.nombre)}</strong>
@@ -3647,7 +3736,7 @@ function ensureAlmacenCategoryFilter(counts) {
     </div>
     <label>Categoria
       <select id="almacenCategoriaSelect">
-        ${MANTTO_CATEGORIAS_REPUESTOS.map((cat) => `
+        ${categoriasRepuestos().map((cat) => `
           <option value="${escapeHtml(cat.id)}" ${state.almacenCategoria === cat.id ? "selected" : ""}>
             ${escapeHtml(cat.nombre)} (${(counts.get(cat.id) || 0).toLocaleString("es-PE")})
           </option>
@@ -3656,6 +3745,7 @@ function ensureAlmacenCategoryFilter(counts) {
     </label>
     <button type="button" class="secondary" onclick="limpiarFiltroCategoriaAlmacen()">Todas</button>
     <button type="button" class="secondary" onclick="verSinCategorizarAlmacen()">Sin categorizar</button>
+    <button type="button" class="primary" onclick="abrirNuevaCategoria()">+ Nueva categoria</button>
   `;
   $("almacenCategoriaSelect")?.addEventListener("change", (event) => {
     state.almacenCategoria = event.target.value || "todas";
@@ -3722,11 +3812,14 @@ function abrirCategorizarRepuesto(id) {
         </dl>
         <label class="span-full">Categoria
           <select name="categoria" required>
-            ${MANTTO_CATEGORIAS_REPUESTOS.filter((cat) => cat.id !== "todas").map((cat) => `
+            ${categoriasRepuestos().filter((cat) => cat.id !== "todas").map((cat) => `
               <option value="${escapeHtml(cat.id)}" ${cat.id === row.categoria_id ? "selected" : ""}>${escapeHtml(cat.nombre)}</option>
             `).join("")}
           </select>
         </label>
+        <div class="form-actions span-full category-modal-actions">
+          <button class="secondary" type="button" onclick="crearCategoriaDesdeModal()">+ Agregar nueva categoria</button>
+        </div>
       </form>
     `,
     "Guardar"
@@ -3737,8 +3830,19 @@ function abrirCategorizarRepuesto(id) {
     guardarCategoria(codigo, categoriaId);
     toast("Categoria guardada localmente", "success");
     renderAlmacen();
+    if (state.currentView === "peticion") renderPeticiones();
     if (state.currentView === "pedidosAceptados") renderPedidosAceptados();
   });
+}
+
+async function crearCategoriaDesdeModal() {
+  const id = await abrirNuevaCategoria();
+  const select = $("categorizarRepuestoForm")?.elements?.categoria;
+  if (!id || !select) return;
+  select.innerHTML = categoriasRepuestos().filter((cat) => cat.id !== "todas").map((cat) => `
+    <option value="${escapeHtml(cat.id)}" ${cat.id === id ? "selected" : ""}>${escapeHtml(cat.nombre)}</option>
+  `).join("");
+  select.value = id;
 }
 
 function abrirConfigInventario(id) {
@@ -3942,6 +4046,7 @@ function renderHistorialPeticiones() {
     merged.set(key, { ...(merged.get(key) || {}), ...row });
   });
   const rows = [...merged.values()]
+    .filter((row) => !isDeletedRow(row))
     .slice()
     .sort((a, b) => String(b.creado_en || b.fecha || "").localeCompare(String(a.creado_en || a.fecha || "")));
   if (!rows.length) {
@@ -3982,12 +4087,14 @@ function peticionesAceptadasRows() {
     merged.set(key, { ...(merged.get(key) || {}), ...row });
   });
   return [...merged.values()]
+    .filter((row) => !isDeletedRow(row))
     .filter((row) => normalizeText(row.estado || "") === "aceptada")
     .sort((a, b) => String(b.creado_en || b.fecha || "").localeCompare(String(a.creado_en || a.fecha || "")));
 }
 
 async function renderPedidosAceptados() {
   ensureManttoV46Ui();
+  asegurarIframePedidosAceptados3D();
   const host = $("pedidosAceptadosTable");
   const categoryHost = $("pedidoAceptadoCategorias");
   const searchInput = $("pedidoAceptadoSearch");
@@ -4060,6 +4167,62 @@ async function renderPedidosAceptados() {
     selectedCodigo: filtered.find((item) => item.id === state.pedidoAceptadoComponente)?.codigo || "",
     selectedUbicacion: filtered.find((item) => item.id === state.pedidoAceptadoComponente)?.ubicacion || "",
   });
+  asegurarIframePedidosAceptados3D();
+}
+
+async function abrirNuevaCategoria() {
+  const ok = await pedirConfirmacion(
+    "Nueva categoria",
+    `
+      <form id="nuevaCategoriaForm" class="form-grid">
+        <label class="span-full">Nombre de categoria
+          <input name="nombre" required placeholder="Ejemplo: Lubricantes, Neumatica, Herramientas">
+        </label>
+        <label class="span-full">Imagen de categoria
+          <input name="imagen_file" type="file" accept="image/*">
+          <span class="muted">Opcional. Tambien puede pegar una ruta abajo.</span>
+        </label>
+        <label class="span-full">Ruta de imagen opcional
+          <input name="imagen" placeholder="/static/assets/categorias/mi-categoria.png">
+        </label>
+      </form>
+    `,
+    "Crear categoria"
+  );
+  if (!ok) return "";
+  const form = $("nuevaCategoriaForm");
+  const nombre = form?.elements?.nombre?.value || "";
+  const file = form?.elements?.imagen_file?.files?.[0];
+  const imagen = file ? await fileToDataUrl(file) : (form?.elements?.imagen?.value || "");
+  const id = addCustomCategoria(nombre, imagen);
+  if (!id) return toast("Ingrese nombre de categoria", "warning");
+  toast("Categoria creada", "success");
+  renderAlmacen();
+  if (state.currentView === "peticion") renderPeticiones();
+  if (state.currentView === "pedidosAceptados") renderPedidosAceptados();
+  return id;
+}
+
+function asegurarIframePedidosAceptados3D() {
+  const frame = $("pedidosAceptadosWarehouseFrame");
+  if (!frame) return;
+  const base = manttoWarehouse3dUrl(true);
+  frame.classList.add("warehouse3d-frame");
+  frame.style.width = "100%";
+  frame.style.height = "720px";
+  frame.style.minHeight = "720px";
+  frame.style.display = "block";
+  frame.style.border = "0";
+  frame.style.background = "#dbeafe";
+  if (!frame.src || !frame.src.includes("warehouse3d_v73/warehouse3d.html")) {
+    frame.src = `${base}&t=${Date.now()}`;
+  }
+  setTimeout(() => {
+    try {
+      frame.contentWindow?.dispatchEvent(new Event("resize"));
+      frame.contentWindow?.postMessage({ type: "mantto:warehouse3d:general" }, "*");
+    } catch (err) {}
+  }, 250);
 }
 
 function filtrarComponentesAceptados(componentes) {
@@ -4079,7 +4242,7 @@ function renderCategoriasAceptadas(componentes) {
     codigo: item.codigo,
     descripcion: item.descripcion,
   })));
-  host.innerHTML = MANTTO_CATEGORIAS_REPUESTOS
+  host.innerHTML = categoriasRepuestos()
     .filter((cat) => cat.id === "todas" || (counts.get(cat.id) || 0) > 0 || cat.id === "sin_categorizar")
     .map((cat) => `
       <button type="button" class="accepted-category-card ${state.pedidoAceptadoCategoria === cat.id ? "active" : ""}" onclick="seleccionarCategoriaPedidosAceptados('${escapeJs(cat.id)}')">
@@ -4970,7 +5133,7 @@ async function renderUsuarios() {
     return;
   }
   try {
-    const users = await api("/api/users");
+    const users = (await api("/api/users")).filter((user) => user.active !== false && user.active !== 0 && !isDeletedRow(user));
     $("configContent").innerHTML = `
       <div class="config-card-intro">
         <h3>DB Usuarios</h3>
