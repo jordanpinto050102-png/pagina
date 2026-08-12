@@ -4,11 +4,11 @@ import { DIMENSIONES_ALMACEN, pisosLayout } from "./warehouse-layout.js";
 
 const materials = {
   floor: new THREE.MeshStandardMaterial({ color: 0xe8eef5, roughness: 0.72 }),
-  rackFrame: new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.55, transparent: true, opacity: 0.18 }),
-  normal: new THREE.MeshStandardMaterial({ color: 0xd9e5f0, roughness: 0.62 }),
+  rackFrame: new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.55, transparent: true, opacity: 0.58 }),
+  normal: new THREE.MeshStandardMaterial({ color: 0xd7e8f7, roughness: 0.5, emissive: 0x13263a }),
   stock: new THREE.MeshStandardMaterial({ color: 0x62c5ef, roughness: 0.55 }),
-  pedido: new THREE.MeshStandardMaterial({ color: 0xf4b400, roughness: 0.45, emissive: 0x3a2500 }),
-  selected: new THREE.MeshStandardMaterial({ color: 0x7c3aed, roughness: 0.42, emissive: 0x241044 }),
+  pedido: new THREE.MeshStandardMaterial({ color: 0xffc72c, roughness: 0.42, emissive: 0x4a3100 }),
+  selected: new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.38, emissive: 0x063449 }),
   error: new THREE.MeshStandardMaterial({ color: 0xd64545, roughness: 0.42 }),
   door: new THREE.MeshStandardMaterial({ color: 0xf4b400, roughness: 0.5, emissive: 0x3a2500 }),
   wall: new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.72, transparent: true, opacity: 0.28 }),
@@ -68,6 +68,10 @@ export function buildWarehouseScene(scene, componentes = []) {
   const aisle = new THREE.GridHelper(Math.max(DIMENSIONES_ALMACEN.piso.ancho, DIMENSIONES_ALMACEN.piso.largo), 32, 0x9fb3c8, 0xd5e0ea);
   aisle.position.y = 0;
   group.add(aisle);
+
+  const axes = new THREE.AxesHelper(4);
+  axes.position.set(-DIMENSIONES_ALMACEN.piso.ancho / 2 + 2.5, 0.08, -DIMENSIONES_ALMACEN.piso.largo / 2 + 2.5);
+  group.add(axes);
 
   pisosLayout().forEach((piso) => {
     group.add(createLabel(piso.nombre, new THREE.Vector3(-DIMENSIONES_ALMACEN.piso.ancho / 2 + 5, 0.8, piso.id === 1 ? -14 : 14), 0.72));

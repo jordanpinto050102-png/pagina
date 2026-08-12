@@ -21,6 +21,7 @@ body {
   font-family: Inter, Roboto, "Segoe UI", Arial, sans-serif;
   background: var(--bg);
   color: var(--ink);
+  overscroll-behavior: none;
 }
 
 button {
@@ -82,26 +83,34 @@ button:hover { filter: brightness(0.98); }
 
 .warehouse-stage {
   position: relative;
-  min-height: 560px;
+  min-height: 620px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
   background: #0f172a;
   box-shadow: var(--shadow);
+  touch-action: none;
 }
 
-.warehouse-canvas,
+.warehouse-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
 .warehouse-canvas canvas {
   width: 100%;
   height: 100%;
   display: block;
+  outline: none;
+  touch-action: none;
 }
 
 .floor-label {
   position: absolute;
   top: 14px;
   left: 14px;
-  z-index: 2;
+  z-index: 4;
   min-width: 116px;
   border-radius: 999px;
   background: rgba(255,255,255,.92);
@@ -176,6 +185,10 @@ body.embedded .warehouse-app {
   min-height: 100vh;
 }
 
+body.embedded {
+  overflow: hidden;
+}
+
 body.embedded .warehouse-head {
   padding: 10px 12px;
 }
@@ -196,16 +209,30 @@ body.embedded .warehouse-layout {
 }
 
 body.embedded .warehouse-stage {
-  min-height: calc(100vh - 86px);
+  min-height: calc(100vh - 76px);
 }
 
 body.embedded .warehouse-side {
   position: absolute;
   right: 20px;
   bottom: 20px;
-  width: min(320px, calc(100% - 40px));
+  width: min(285px, calc(100% - 40px));
   z-index: 5;
   display: block;
+}
+
+body.embedded .component-card {
+  padding: 12px;
+  font-size: 12px;
+}
+
+body.embedded .component-card h2 {
+  font-size: 14px;
+}
+
+body.embedded .component-card dl {
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 6px 8px;
 }
 
 body.embedded .pedido-list {
@@ -219,6 +246,41 @@ body.design-mode .warehouse-stage {
 
 .muted { color: var(--muted); }
 .error { color: var(--danger); font-weight: 900; }
+
+.warehouse-canvas-error canvas {
+  opacity: 0.35;
+}
+
+.warehouse-fallback-map {
+  position: absolute;
+  inset: 62px 22px 22px;
+  z-index: 3;
+  display: grid;
+  align-content: center;
+  gap: 14px;
+  border: 1px solid rgba(255,255,255,.18);
+  border-radius: var(--radius);
+  background: rgba(15,23,42,.84);
+  color: #fff;
+  padding: 18px;
+  text-align: center;
+}
+
+.fallback-racks {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.fallback-racks span {
+  min-height: 54px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.32);
+  border-radius: 6px;
+  background: rgba(8,121,201,.32);
+  font-weight: 900;
+}
 
 @media (max-width: 980px) {
   .warehouse-layout {

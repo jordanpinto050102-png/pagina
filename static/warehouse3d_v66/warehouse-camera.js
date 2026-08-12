@@ -31,5 +31,5 @@ export function focusObject(camera, controls, object, offset = new THREE.Vector3
 }
 
 export function generalView(camera, controls) {
-  animateCamera(camera, controls, new THREE.Vector3(10, 12, 18), new THREE.Vector3(0, 1.7, 0), 950);
+  animateCamera(camera, controls, new THREE.Vector3(0, 24, 34), new THREE.Vector3(0, 1.9, 0), 950);
 }

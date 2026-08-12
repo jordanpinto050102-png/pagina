@@ -1324,7 +1324,6 @@ tr:last-child td { border-bottom: 0; }
 
 
 
-
 .app[data-current-view="historialPeticiones"] #historialPeticiones,
 .app[data-current-view="kardex"] #kardex,
 .app[data-current-view="ingresoItem"] #ingresoItem,
@@ -1592,12 +1591,17 @@ tr:last-child td { border-bottom: 0; }
 .accepted-component { width: 100%; display: grid; gap: 3px; margin-top: 7px; border: 1px solid var(--line, #e3eaf2); border-left: 5px solid var(--primary, #0877d8); background: #fbfdff; color: var(--ink, #10243f); text-align: left; padding: 9px; }
 .accepted-component.active { border-left-color: var(--yellow, #f4c430); background: #fff8df; box-shadow: inset 0 0 0 1px rgba(244,180,0,.28); }
 .accepted-component span { color: var(--muted, #61728a); font-size: 12px; font-weight: 700; }
-.peticion-category-group { display: grid; gap: 10px; border: 1px solid var(--line, #e3eaf2); border-radius: var(--radius, 8px); background: #fff; padding: 12px; box-shadow: 0 8px 18px rgba(12,42,80,.07); }
-.peticion-category-group > header { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line, #e3eaf2); padding-bottom: 10px; }
+.peticion-category-grid-large { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.peticion-category-group { display: grid; gap: 10px; border: 1px solid var(--line, #e3eaf2); border-radius: var(--radius, 8px); background: #fff; padding: 0; box-shadow: 0 8px 18px rgba(12,42,80,.07); overflow: hidden; }
+.peticion-category-group.is-open { grid-column: 1 / -1; border-color: #b7d5f1; }
+.peticion-category-cover { width: 100%; min-height: 154px; display: grid; grid-template-columns: 116px 1fr; gap: 14px; align-items: center; text-align: left; border: 0; border-radius: 0; background: #fff; padding: 14px; color: var(--ink, #10243f); }
+.peticion-category-cover:hover { background: #f7fbff; }
 .peticion-category-group h3 { margin: 0; color: var(--primary-dark, #064b8f); font-size: 16px; }
 .peticion-category-group p { margin: 2px 0 0; font-size: 12px; }
+.peticion-category-group small { color: var(--primary, #0877d8); font-weight: 900; }
+.category-image-large { height: 106px !important; }
 .peticion-category-items { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-.peticion-category-list { display: grid; gap: 8px; }
+.peticion-category-list { display: grid; gap: 8px; padding: 12px; border-top: 1px solid var(--line, #e3eaf2); background: #f8fbff; }
 .peticion-material-row { display: grid; grid-template-columns: minmax(260px, 1fr) 120px 124px auto; gap: 10px; align-items: center; border: 1px solid var(--line, #e3eaf2); border-radius: var(--radius, 8px); background: #fbfdff; padding: 10px; }
 .peticion-material-main { display: grid; gap: 4px; min-width: 0; }
 .peticion-material-main strong { color: var(--primary-dark, #064b8f); overflow-wrap: anywhere; line-height: 1.25; }
@@ -1607,6 +1611,11 @@ tr:last-child td { border-bottom: 0; }
 .peticion-material-qty { margin: 0; }
 .peticion-material-add { min-width: 96px; }
 .almacen-category-filter { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; border: 1px solid var(--line, #e3eaf2); border-radius: var(--radius, 8px); background: #fff; padding: 12px; box-shadow: 0 8px 18px rgba(12,42,80,.07); }
+.almacen-category-quick-grid { flex: 1 1 100%; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+.almacen-category-chip { min-height: 96px; display: grid; gap: 5px; align-content: start; text-align: left; border: 1px solid var(--line, #e3eaf2); background: #fff; padding: 8px; }
+.almacen-category-chip.active { border-color: var(--primary, #0877d8); background: var(--primary-soft, #e8f4ff); box-shadow: inset 4px 0 0 var(--primary, #0877d8); }
+.almacen-category-chip strong { font-size: 12px; color: var(--primary-dark, #064b8f); }
+.almacen-category-chip small { color: var(--muted, #61728a); font-weight: 900; }
 .almacen-category-filter label { min-width: min(360px, 100%); }
 .inventory-category-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0 0 12px; }
 .inventory-kpi { display: grid; gap: 5px; border: 1px solid var(--line, #e3eaf2); border-left: 5px solid var(--primary, #0877d8); border-radius: var(--radius, 8px); background: #fff; padding: 12px; text-align: left; color: var(--ink, #10243f); }
@@ -1615,4 +1624,387 @@ tr:last-child td { border-bottom: 0; }
 .inventory-kpi.danger-soft { border-left-color: var(--danger, #c7372f); background: var(--danger-soft, #fff0ef); }
 .inventory-kpi.ok-soft { border-left-color: var(--green, #19a55a); background: var(--green-soft, #e9f8ef); }
 @media (max-width: 1180px) { .accepted-wms-layout { grid-template-columns: 1fr; } .accepted-wms-stage { min-height: 520px; } .accepted-wms-side { grid-template-rows: auto auto; } }
-@media (max-width: 760px) { .accepted-wms-tools, .inventory-category-summary { grid-template-columns: 1fr; } .accepted-category-grid, .peticion-category-items, .peticion-material-row { grid-template-columns: 1fr; } }
+@media (max-width: 1180px) { .almacen-category-quick-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 760px) { .accepted-wms-tools, .inventory-category-summary { grid-template-columns: 1fr; } .accepted-category-grid, .peticion-category-grid-large, .peticion-category-items, .peticion-material-row, .almacen-category-quick-grid { grid-template-columns: 1fr; } .peticion-category-cover { grid-template-columns: 86px 1fr; min-height: 120px; } .category-image-large { height: 82px !important; } }
+
+/* v64 - Peticiones por categorias centradas, estilo Almacen */
+#peticionCatalogHost .catalog-layout-v46 {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  gap: 18px;
+  align-items: start;
+}
+
+#peticionCatalogHost .catalog-results-v46 {
+  width: 100%;
+}
+
+#peticionCatalogHost .peticion-category-grid-large {
+  width: 100%;
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+  align-items: stretch;
+  justify-items: stretch;
+}
+
+#peticionCatalogHost .peticion-category-group {
+  min-height: 190px;
+  display: block;
+  border: 1px solid var(--line, #e3eaf2);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0;
+  overflow: hidden;
+  box-shadow: 0 10px 22px rgba(12, 42, 80, 0.08);
+}
+
+#peticionCatalogHost .peticion-category-group.is-open {
+  grid-column: auto;
+}
+
+#peticionCatalogHost .peticion-category-cover {
+  width: 100%;
+  min-height: 190px;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 112px auto;
+  gap: 10px;
+  align-content: start;
+  text-align: left;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  padding: 10px;
+  color: var(--ink, #10243f);
+}
+
+#peticionCatalogHost .peticion-category-cover:hover {
+  background: #f7fbff;
+  outline: 2px solid rgba(8, 119, 216, 0.22);
+  outline-offset: -2px;
+}
+
+#peticionCatalogHost .category-image-large {
+  width: 100%;
+  height: 108px !important;
+  border-radius: 7px;
+  background-color: #edf2f7;
+  background-size: cover;
+  background-position: center;
+  border: 1px solid #e2e8f0;
+}
+
+#peticionCatalogHost .category-image-large i {
+  min-width: 42px;
+  min-height: 42px;
+  font-size: 20px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--primary-dark, #064b8f);
+}
+
+#peticionCatalogHost .peticion-category-group h3 {
+  margin: 0 0 4px;
+  color: var(--primary-dark, #064b8f);
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+#peticionCatalogHost .peticion-category-group p {
+  margin: 0;
+  color: var(--muted, #61728a);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+#peticionCatalogHost .peticion-category-group small {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--primary, #0877d8);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.peticion-category-open-view {
+  display: grid;
+  gap: 12px;
+}
+
+.peticion-category-open-head {
+  display: grid;
+  grid-template-columns: auto 120px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--line, #e3eaf2);
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+  box-shadow: 0 10px 22px rgba(12, 42, 80, 0.08);
+}
+
+.peticion-category-open-head h3 {
+  margin: 0 0 4px;
+  color: var(--primary-dark, #064b8f);
+}
+
+.peticion-category-open-head p,
+.peticion-category-open-head small {
+  margin: 0;
+  color: var(--muted, #61728a);
+  font-weight: 800;
+}
+
+.peticion-category-list-open {
+  border: 1px solid var(--line, #e3eaf2);
+  border-radius: 8px;
+  background: #f8fbff;
+  padding: 12px;
+}
+
+@media (max-width: 1080px) {
+  #peticionCatalogHost .catalog-layout-v46 {
+    grid-template-columns: 1fr;
+  }
+
+  .peticion-category-open-head {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  #peticionCatalogHost .peticion-category-grid-large {
+    grid-template-columns: 1fr;
+  }
+
+  #peticionCatalogHost .peticion-material-row {
+    grid-template-columns: 1fr;
+  }
+}
+#peticionCatalogHost {
+  width: 100%;
+}
+
+#peticionCatalogHost .peticion-wms-layout-v65 {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+  gap: 18px;
+  align-items: start;
+}
+
+#peticionCatalogHost .peticion-catalog-v65 {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+
+#peticionCatalogHost .catalog-results-v46 {
+  display: block !important;
+  width: 100%;
+}
+
+#peticionCatalogHost .peticion-category-grid-large {
+  width: 100%;
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)) !important;
+  gap: 18px !important;
+  align-items: stretch;
+}
+
+#peticionCatalogHost .peticion-category-group {
+  min-width: 0;
+  min-height: 236px;
+  display: block;
+  border: 1px solid var(--line, #e3eaf2);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 12px 26px rgba(12, 42, 80, 0.09);
+  overflow: hidden;
+}
+
+#peticionCatalogHost .peticion-category-cover {
+  width: 100%;
+  height: 100%;
+  min-height: 236px;
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  grid-template-rows: 138px auto;
+  gap: 12px;
+  align-items: stretch;
+  text-align: left;
+  border: 0;
+  border-radius: 0;
+  background: #fff;
+  padding: 12px;
+}
+
+#peticionCatalogHost .peticion-category-cover:hover {
+  background: #f7fbff;
+  box-shadow: inset 0 0 0 2px rgba(8, 119, 216, 0.12);
+}
+
+#peticionCatalogHost .category-image-large {
+  width: 100%;
+  height: 138px !important;
+  border-radius: 8px;
+  background-color: #eef3f8;
+  background-size: cover;
+  background-position: center;
+}
+
+#peticionCatalogHost .category-image-large i {
+  width: 48px;
+  height: 48px;
+  font-size: 22px;
+}
+
+#peticionCatalogHost .peticion-category-group h3 {
+  margin: 0;
+  color: var(--primary-dark, #064b8f);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+#peticionCatalogHost .peticion-category-group p {
+  margin: 6px 0 4px;
+  color: var(--ink, #10243f);
+  font-weight: 800;
+}
+
+#peticionCatalogHost .peticion-category-group small {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--primary-soft, #e8f4ff);
+  color: var(--primary-dark, #064b8f);
+  padding: 5px 10px;
+  font-weight: 900;
+}
+
+#peticionCatalogHost .peticion-category-open-view {
+  display: grid;
+  gap: 12px;
+}
+
+#peticionCatalogHost .peticion-category-open-head {
+  display: grid;
+  grid-template-columns: auto 140px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--line, #e3eaf2);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+  box-shadow: 0 12px 26px rgba(12, 42, 80, 0.08);
+}
+
+#peticionCatalogHost .peticion-category-open-head h3 {
+  margin: 0;
+  color: var(--primary-dark, #064b8f);
+  font-size: 22px;
+}
+
+#peticionCatalogHost .peticion-category-open-head p,
+#peticionCatalogHost .peticion-category-open-head small {
+  display: block;
+  margin: 4px 0 0;
+  color: var(--muted, #61728a);
+  font-weight: 800;
+}
+
+#peticionCatalogHost .peticion-category-list-open {
+  display: grid;
+  gap: 10px;
+}
+
+#peticionCatalogHost .peticion-material-row {
+  grid-template-columns: minmax(240px, 1fr) 128px 124px auto;
+}
+
+@media (max-width: 1180px) {
+  #peticionCatalogHost .peticion-wms-layout-v65 {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  #peticionCatalogHost .peticion-category-grid-large {
+    grid-template-columns: 1fr !important;
+  }
+
+  #peticionCatalogHost .peticion-category-open-head,
+  #peticionCatalogHost .peticion-material-row {
+    grid-template-columns: 1fr;
+  }
+
+  #peticionCatalogHost .peticion-category-open-head .category-image-large {
+    height: 110px !important;
+  }
+}
+
+/* v66: peticiones por categorias y 3D estable */
+#peticionCatalogHost {
+  width: 100%;
+}
+#peticionCatalogHost .peticion-category-grid-large {
+  width: 100%;
+  display: grid !important;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)) !important;
+  gap: 18px !important;
+  align-items: stretch !important;
+  justify-items: stretch !important;
+}
+#peticionCatalogHost .peticion-category-block,
+#peticionCatalogHost .peticion-category-group {
+  min-width: 0 !important;
+  width: 100% !important;
+}
+#peticionCatalogHost .peticion-category-cover {
+  min-height: 210px !important;
+  grid-template-columns: 1fr !important;
+  justify-items: center !important;
+  align-content: center !important;
+  text-align: center !important;
+  padding: 18px !important;
+}
+#peticionCatalogHost .category-image-large {
+  width: 100% !important;
+  max-width: 190px !important;
+  height: 120px !important;
+}
+#peticionCatalogHost .peticion-category-open-view {
+  width: 100%;
+}
+#peticionCatalogHost .peticion-category-list-open,
+#peticionCatalogHost .peticion-category-list {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  gap: 10px !important;
+}
+.accepted-wms-layout {
+  min-height: 650px !important;
+  grid-template-columns: minmax(0, 1fr) 390px !important;
+}
+.accepted-wms-stage {
+  min-height: 650px !important;
+  background: #0f172a !important;
+}
+.accepted-wms-stage iframe,
+.warehouse3d-shell iframe {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 620px !important;
+  border: 0 !important;
+  display: block !important;
+  background: #0f172a !important;
+}
+@media (min-width: 1280px) {
+  #peticionCatalogHost .peticion-category-grid-large {
+    grid-template-columns: repeat(4, minmax(220px, 1fr)) !important;
+  }
+}
+@media (max-width: 1180px) {
+  .accepted-wms-layout {
+    grid-template-columns: 1fr !important;
+  }
+}

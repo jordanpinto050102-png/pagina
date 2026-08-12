@@ -20,26 +20,46 @@ let warehouseGroup = null;
 let designMode = false;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0f172a);
+scene.background = new THREE.Color(0x23364f);
 
 const camera = new THREE.PerspectiveCamera(55, host.clientWidth / host.clientHeight, 0.1, 1000);
-camera.position.set(10, 12, 18);
+camera.position.set(0, 22, 32);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(host.clientWidth, host.clientHeight);
 renderer.shadowMap.enabled = true;
 host.appendChild(renderer.domElement);
+host.insertAdjacentHTML("beforeend", renderFallbackMap("Cargando vista 3D..."));
+renderer.domElement.tabIndex = 0;
+renderer.domElement.style.touchAction = "none";
+renderer.domElement.addEventListener("webglcontextlost", (event) => {
+  event.preventDefault();
+  host.classList.add("warehouse-canvas-error");
+  host.insertAdjacentHTML("beforeend", renderFallbackMap());
+  componentCard.innerHTML = `<h2>Almacen 3D</h2><p class="error">El navegador pauso el render 3D. Use Vista general o recargue la pantalla.</p>`;
+});
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+controls.enableZoom = true;
+controls.enablePan = true;
+controls.enableRotate = true;
+controls.zoomSpeed = 1.15;
+controls.panSpeed = 0.85;
+controls.rotateSpeed = 0.75;
+controls.minDistance = 2.2;
+controls.maxDistance = 90;
 controls.target.set(0, 1.8, 0);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x1e293b, 1.9));
+scene.add(new THREE.HemisphereLight(0xffffff, 0x1e293b, 3.2));
 const sun = new THREE.DirectionalLight(0xffffff, 2.0);
 sun.position.set(5, 12, 8);
 sun.castShadow = true;
 scene.add(sun);
+const fillLight = new THREE.DirectionalLight(0xdbeafe, 2.2);
+fillLight.position.set(-8, 7, -10);
+scene.add(fillLight);
 
 rebuildWarehouse(payload.componentes || []);
 
@@ -53,6 +73,19 @@ function rebuildWarehouse(componentes = []) {
   warehouseGroup = built.group;
   positionMap = built.positionMap;
   materials = built.materials;
+  host.querySelector(".warehouse-fallback-map")?.remove();
+}
+
+function renderFallbackMap(title = "Vista de referencia") {
+  return `
+    <div class="warehouse-fallback-map">
+      <strong>${title}</strong>
+      <div class="fallback-racks">
+        ${["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10"].map((rack) => `<span>${rack}</span>`).join("")}
+      </div>
+      <small>Si WebGL se pausa, recargue la pantalla o use otro navegador.</small>
+    </div>
+  `;
 }
 
 function applyPayload(nextPayload, options = {}) {
@@ -149,6 +182,7 @@ pedidoList.addEventListener("click", (event) => {
 });
 
 renderer.domElement.addEventListener("click", (event) => {
+  renderer.domElement.focus();
   const rect = renderer.domElement.getBoundingClientRect();
   const pointer = new THREE.Vector2(
     ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -189,6 +223,11 @@ renderer.domElement.addEventListener("click", (event) => {
   }
 });
 
+renderer.domElement.addEventListener("wheel", (event) => {
+  renderer.domElement.focus();
+  event.stopPropagation();
+}, { passive: false });
+
 document.getElementById("backBtn").addEventListener("click", () => {
   window.parent?.postMessage({ type: "mantto:setView", view: "pedidosAceptados" }, "*");
   try {
@@ -227,15 +266,32 @@ window.addEventListener("message", (event) => {
   }
 });
 
-window.addEventListener("resize", () => {
-  camera.aspect = host.clientWidth / host.clientHeight;
+function resizeRenderer() {
+  const width = Math.max(320, host.clientWidth || host.getBoundingClientRect().width || 320);
+  const height = Math.max(260, host.clientHeight || host.getBoundingClientRect().height || 260);
+  camera.aspect = width / height;
   camera.updateProjectionMatrix();
-  renderer.setSize(host.clientWidth, host.clientHeight);
-});
+  renderer.setSize(width, height, false);
+}
+
+function hideFallbackIfRendered() {
+  const fallback = host.querySelector(".warehouse-fallback-map");
+  if (fallback && renderer.info.render.calls > 0) fallback.classList.add("is-rendered");
+}
+
+window.addEventListener("resize", resizeRenderer);
+new ResizeObserver(resizeRenderer).observe(host);
+setTimeout(resizeRenderer, 120);
+setTimeout(resizeRenderer, 520);
+setTimeout(() => {
+  resizeRenderer();
+  generalView(camera, controls);
+}, 900);
 
 function animate() {
   controls.update();
   renderer.render(scene, camera);
+  hideFallbackIfRendered();
   requestAnimationFrame(animate);
 }
 

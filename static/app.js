@@ -32,6 +32,7 @@ const state = {
   pedidoAceptadoCategoria: "todas",
   pedidoAceptadoComponente: "",
   pedidoAceptadoComponentes: [],
+  peticionCategoriaAbierta: "",
   warehouse3dPayload: null,
   inventarioMovimientos: [],
   kardexDesde: "",
@@ -106,8 +107,8 @@ const MANTTO_CATEGORIAS_REPUESTOS = [
 ];
 
 function manttoWarehouse3dUrl(embedded = false) {
-  const file = "warehouse3d_v62/warehouse3d.html";
-  const query = embedded ? "?embedded=1&v=62" : "?v=62";
+  const file = "warehouse3d_v66/warehouse3d.html";
+  const query = embedded ? "?embedded=1&v=66" : "?v=66";
   const match = window.location.pathname.match(/^\/networks\/([^/]+)\//);
   if (match) return `/networks/${match[1]}/${file}${query}`;
   return `/static/${file}${query}`;
@@ -757,21 +758,42 @@ function ensureManttoV51VisibilityCss() {
       font-size: 12px;
       font-weight: 700;
     }
+    .peticion-category-grid-large {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
     .peticion-category-group {
       display: grid;
       gap: 10px;
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: #fff;
-      padding: 12px;
+      padding: 0;
       box-shadow: 0 8px 18px rgba(12,42,80,.07);
+      overflow: hidden;
     }
-    .peticion-category-group > header {
-      display: flex;
+    .peticion-category-group.is-open {
+      grid-column: 1 / -1;
+      border-color: #b7d5f1;
+    }
+    .peticion-category-cover {
+      width: 100%;
+      min-height: 154px;
+      display: grid;
+      grid-template-columns: 116px 1fr;
+      gap: 14px;
       align-items: center;
-      gap: 10px;
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 10px;
+      text-align: left;
+      border: 0;
+      border-radius: 0;
+      background: #fff;
+      padding: 14px;
+      color: var(--ink);
+    }
+    .peticion-category-cover:hover {
+      background: #f7fbff;
     }
     .peticion-category-group h3 {
       margin: 0;
@@ -782,6 +804,13 @@ function ensureManttoV51VisibilityCss() {
       margin: 2px 0 0;
       font-size: 12px;
     }
+    .peticion-category-group small {
+      color: var(--primary);
+      font-weight: 900;
+    }
+    .category-image-large {
+      height: 106px !important;
+    }
     .peticion-category-items {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -790,6 +819,9 @@ function ensureManttoV51VisibilityCss() {
     .peticion-category-list {
       display: grid;
       gap: 8px;
+      padding: 12px;
+      border-top: 1px solid var(--line);
+      background: #f8fbff;
     }
     .peticion-material-row {
       display: grid;
@@ -846,6 +878,35 @@ function ensureManttoV51VisibilityCss() {
     .almacen-category-filter label {
       min-width: min(360px, 100%);
     }
+    .almacen-category-quick-grid {
+      flex: 1 1 100%;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .almacen-category-chip {
+      min-height: 96px;
+      display: grid;
+      gap: 5px;
+      align-content: start;
+      text-align: left;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 8px;
+    }
+    .almacen-category-chip.active {
+      border-color: var(--primary);
+      background: var(--primary-soft);
+      box-shadow: inset 4px 0 0 var(--primary);
+    }
+    .almacen-category-chip strong {
+      font-size: 12px;
+      color: var(--primary-dark);
+    }
+    .almacen-category-chip small {
+      color: var(--muted);
+      font-weight: 900;
+    }
     .inventory-category-summary {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -891,12 +952,21 @@ function ensureManttoV51VisibilityCss() {
       .inventory-category-summary {
         grid-template-columns: 1fr;
       }
-      .accepted-category-grid {
+      .accepted-category-grid,
+      .peticion-category-grid-large,
+      .almacen-category-quick-grid {
         grid-template-columns: 1fr;
       }
       .peticion-category-items,
       .peticion-material-row {
         grid-template-columns: 1fr;
+      }
+      .peticion-category-cover {
+        grid-template-columns: 86px 1fr;
+        min-height: 120px;
+      }
+      .category-image-large {
+        height: 82px !important;
       }
     }
     .accepted-orders-grid {
@@ -2807,8 +2877,8 @@ function renderPeticiones() {
   const host = $("peticionCatalogHost") || $("peticionesPendientes") || $("peticion")?.querySelector(".table-wrap");
   if (!host) return;
   host.innerHTML = `
-    <div class="catalog-layout-v46">
-      <section>
+    <div class="peticion-wms-layout-v65">
+      <section class="peticion-catalog-v65">
         <div class="catalog-search-v46">
           <label>🔎 Buscar material por descripcion o codigo
             <input id="peticionMaterialSearch" type="search" placeholder="Ejemplo: rodamiento, faja, grasa..." value="${escapeHtml(state.peticionSearch)}">
@@ -2878,25 +2948,53 @@ function renderPeticionGroupedResults() {
     if (!groups.has(categoria)) groups.set(categoria, []);
     groups.get(categoria).push(row);
   });
-  return [...groups.entries()]
+  const entries = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], "es"));
+  if (state.peticionCategoriaAbierta) {
+    const selectedEntry = entries.find(([categoria]) => categoriaByName(categoria).id === state.peticionCategoriaAbierta);
+    if (selectedEntry) {
+      const [categoria, items] = selectedEntry;
+      const meta = categoriaByName(categoria);
+      return `
+        <div class="peticion-category-open-view">
+          <div class="peticion-category-open-head">
+            <button class="secondary" type="button" onclick="togglePeticionCategoria('')">← Ver categorias</button>
+            <span class="category-image category-image-large" style="background-image:url('${escapeHtml(meta.imagen)}')"><i>${escapeHtml(meta.icono)}</i></span>
+            <div>
+              <h3>${escapeHtml(categoria)}</h3>
+              <p>${items.length.toLocaleString("es-PE")} material(es) disponible(s)</p>
+              <small>Seleccione cantidad y agregue a su peticion.</small>
+            </div>
+          </div>
+          <div class="peticion-category-list-open">
+            ${items.map(renderMaterialListRow).join("")}
+          </div>
+        </div>
+      `;
+    }
+  }
+  const ordered = entries
     .sort((a, b) => a[0].localeCompare(b[0], "es"))
     .map(([categoria, items]) => {
       const meta = categoriaByName(categoria);
       return `
         <section class="peticion-category-group peticion-category-block">
-          <header>
-            <span class="category-image" style="background-image:url('${escapeHtml(meta.imagen)}')"><i>${escapeHtml(meta.icono)}</i></span>
+          <button class="peticion-category-cover" type="button" onclick="togglePeticionCategoria('${escapeJs(meta.id)}')">
+            <span class="category-image category-image-large" style="background-image:url('${escapeHtml(meta.imagen)}')"><i>${escapeHtml(meta.icono)}</i></span>
             <div>
               <h3>${escapeHtml(categoria)}</h3>
-              <p>${items.length.toLocaleString("es-PE")} material(es) disponible(s). Seleccione cantidad y agregue desde la lista.</p>
+              <p>${items.length.toLocaleString("es-PE")} material(es) disponible(s)</p>
+              <small>Ver materiales</small>
             </div>
-          </header>
-          <div class="peticion-category-list">
-            ${items.map(renderMaterialListRow).join("")}
-          </div>
+          </button>
         </section>
       `;
     }).join("");
+  return `<div class="peticion-category-grid-large">${ordered}</div>`;
+}
+
+function togglePeticionCategoria(categoriaId) {
+  state.peticionCategoriaAbierta = categoriaId || "";
+  renderPeticionSearchResults();
 }
 
 function renderMaterialListRow(row) {
@@ -3533,6 +3631,15 @@ function ensureAlmacenCategoryFilter(counts) {
     table.insertAdjacentElement("beforebegin", filter);
   }
   filter.innerHTML = `
+    <div class="almacen-category-quick-grid">
+      ${MANTTO_CATEGORIAS_REPUESTOS.map((cat) => `
+        <button type="button" class="almacen-category-chip ${state.almacenCategoria === cat.id ? "active" : ""}" onclick="seleccionarCategoriaAlmacen('${escapeJs(cat.id)}')">
+          <span class="category-image" style="background-image:url('${escapeHtml(cat.imagen)}')"><i>${escapeHtml(cat.icono)}</i></span>
+          <strong>${escapeHtml(cat.nombre)}</strong>
+          <small>${(counts.get(cat.id) || 0).toLocaleString("es-PE")}</small>
+        </button>
+      `).join("")}
+    </div>
     <label>Categoria
       <select id="almacenCategoriaSelect">
         ${MANTTO_CATEGORIAS_REPUESTOS.map((cat) => `
@@ -3549,6 +3656,11 @@ function ensureAlmacenCategoryFilter(counts) {
     state.almacenCategoria = event.target.value || "todas";
     renderAlmacen();
   });
+}
+
+function seleccionarCategoriaAlmacen(categoriaId) {
+  state.almacenCategoria = categoriaId || "todas";
+  renderAlmacen();
 }
 
 function ensureAlmacenCategorySummary(counts) {
@@ -3947,9 +4059,7 @@ async function renderPedidosAceptados() {
 
 function filtrarComponentesAceptados(componentes) {
   const q = normalizeText(state.pedidoAceptadoSearch || "");
-  const categoria = $("pedidoAceptadoCategorias") ? (state.pedidoAceptadoCategoria || "todas") : "todas";
   return (componentes || [])
-    .filter((item) => categoria === "todas" || item.categoria_id === categoria)
     .filter((item) => !q || normalizeText(`${item.pedidoNumero} ${item.codigo} ${item.nombre} ${item.descripcion} ${item.modelo} ${item.ubicacion} ${item.categoria}`).includes(q));
 }
 
