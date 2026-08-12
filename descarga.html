@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Descarga Mantto CMMS</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, Arial, sans-serif; }
+    body { margin: 0; background: #f4f7fb; color: #10243f; }
+    main { max-width: 940px; margin: 0 auto; padding: 32px 18px; }
+    .panel { background: #fff; border: 1px solid #d9e5f2; border-radius: 8px; padding: 24px; box-shadow: 0 14px 34px rgba(12,42,80,.10); }
+    h1 { margin: 0 0 8px; font-size: 30px; color: #064b8f; }
+    h2 { margin-top: 28px; font-size: 18px; color: #064b8f; }
+    p { line-height: 1.5; }
+    a.button { display: inline-block; background: #0877d8; color: white; text-decoration: none; padding: 12px 16px; border-radius: 6px; font-weight: 800; margin: 8px 8px 8px 0; }
+    a.secondary { background: #2f3b45; }
+    code, pre { background: #eef4fb; border-radius: 6px; }
+    code { padding: 2px 5px; }
+    pre { padding: 12px; overflow: auto; }
+    ul { line-height: 1.8; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel">
+      <h1>Mantto CMMS - Alimentos Cielo S.A.C.</h1>
+      <p>Proyecto actualizado como sistema CMMS web: dashboard operativo, avisos, OT, peticiones, almacen, Cerrar OT's, Calificar OT, Historial de calificaciones, Historial de OT, cerrar avisos e importacion/usuarios.</p>
+      <p>
+        <a class="button" href="/networks/miguelpinto/downloads/mantto_web_propio_v20_encuesta_scroll.zip" download>Descargar ZIP v20</a>
+      </p>
+      <h2>Cambios principales v20</h2>
+      <ul>
+        <li>Corregida la encuesta de Calificar OT: ahora tiene scroll interno para bajar y ver todos los criterios, observaciones y botones.</li>
+        <li>La ventana de encuesta es mas ancha y ordenada para PC, sin salirse de la pantalla.</li>
+        <li>Los botones Cancelar y Guardar calificacion quedan accesibles al final del modal.</li>
+        <li>Se subio la version de cache de CSS/JS a v20 para evitar que Chrome siga usando archivos antiguos.</li>
+        <li>Corregido el error visual que dejaba Cerrar OT's en blanco: faltaba habilitar la vista <code>cerrarOt</code> en CSS.</li>
+        <li>Cerrar OT's ahora muestra un resumen superior con OT pendientes, abiertas/asignadas y en ejecucion.</li>
+        <li>La tabla de cierre ahora queda dentro de una tarjeta clara con mensaje profesional si no hay OT pendientes.</li>
+        <li>Se subio la version de cache de CSS/JS a v19 para evitar que Chrome siga usando archivos antiguos.</li>
+        <li>Una OT nueva queda en estado ABIERTA y debe cerrarse explicitamente en Cerrar OT's.</li>
+        <li>Se usa el apartado existente Cerrar OT's; no se crea otro menu ni otra pantalla.</li>
+        <li>Cerrar OT's lista solo OT pendientes de cierre con columnas OT, fecha, area, equipo, estado y acciones.</li>
+        <li>Agregue filtros Hoy, Ayer, Ultimos 7 dias, Este mes, Todas y busqueda por OT, area o equipo.</li>
+        <li>Cada OT tiene botones claros: 👁 Ver detalle y 🔒 Cerrar OT.</li>
+        <li>El cierre directo pide confirmacion y guarda estado CERRADA, fecha/hora de cierre y usuario que cerro.</li>
+        <li>Despues de cerrar, la OT desaparece de Cerrar OT's y queda disponible en Calificar OT e Historial de OT.</li>
+        <li>Calificar OT solo permite calificar OT CERRADAS.</li>
+        <li>Las OT ABIERTAS se muestran con estado amarillo y boton 🔒 Calificar deshabilitado.</li>
+        <li>Las OT CERRADAS sin calificar muestran boton ⭐ Calificar habilitado.</li>
+        <li>Las OT ya calificadas muestran ✓ Ver calificacion y no duplican registros.</li>
+        <li>La encuesta conserva los cuatro factores: limpieza, calidad, tiempo de atencion y orden.</li>
+        <li>Al guardar calificacion, la OT permanece CERRADA y se identifica como ⭐ CALIFICADA por su registro de calificacion.</li>
+        <li>Historial de calificaciones e Historial de OT siguen como pantallas independientes.</li>
+        <li>Se mantiene eliminacion logica de OT y avisos para no romper trazabilidad.</li>
+      </ul>
+      <h2>Instalacion rapida</h2>
+      <pre>cd C:\Mantto\mantto_web_propio
+pip install -r requirements.txt
+python servidor.py</pre>
+      <p>Luego abre <code>http://127.0.0.1:8000</code> en la PC servidor.</p>
+      <h2>Usuario inicial</h2>
+      <pre>usuario: admin
+clave: admin123</pre>
+      <h2>Logo oficial</h2>
+      <p>Coloca el logo oficial en:</p>
+      <pre>static/assets/logo-empresa.png
+static/assets/logo-empresa-blanco.png</pre>
+      <h2>Archivos principales sueltos</h2>
+      <ul>
+        <li><a href="/networks/miguelpinto/downloads/mantto_web_propio/static/index.html">static/index.html</a></li>
+        <li><a href="/networks/miguelpinto/downloads/mantto_web_propio/static/app.js">static/app.js</a></li>
+        <li><a href="/networks/miguelpinto/downloads/mantto_web_propio/static/styles.css">static/styles.css</a></li>
+        <li><a href="/networks/miguelpinto/downloads/mantto_web_propio/servidor.py">servidor.py</a></li>
+        <li><a href="/networks/miguelpinto/downloads/mantto_web_propio/db.py">db.py</a></li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

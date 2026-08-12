@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MANTTO - Almacen 3D</title>
+  <link rel="stylesheet" href="./warehouse3d.css">
+</head>
+<body>
+  <main class="warehouse-app">
+    <header class="warehouse-head">
+      <div>
+        <button id="backBtn" type="button" class="ghost">← Volver a pedidos</button>
+        <h1>Almacen 3D</h1>
+        <p>Simulacion WMS 3D basada en codigos reales de almacen.</p>
+      </div>
+      <div class="warehouse-actions">
+        <button id="floor1Btn" type="button">Piso 1</button>
+        <button id="floor2Btn" type="button">Piso 2</button>
+        <button id="generalBtn" type="button">Vista general</button>
+        <button id="designBtn" type="button">Vista de diseño</button>
+        <button id="centerBtn" type="button" class="primary">Centrar ubicacion</button>
+      </div>
+    </header>
+
+    <section class="warehouse-layout">
+      <div class="warehouse-stage">
+        <div id="floorLabel" class="floor-label">ALMACEN</div>
+        <div id="warehouseCanvas" class="warehouse-canvas"></div>
+      </div>
+
+      <aside class="warehouse-side">
+        <div id="componentCard" class="component-card"></div>
+        <div id="pedidoList" class="pedido-list"></div>
+      </aside>
+    </section>
+  </main>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="./warehouse3d.js"></script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+/* MANTTO v50 - ajustes visuales complementarios para Atender Aviso e Historial */
+#atenderAviso .table-wrap td:last-child,
+#historialPeticiones .table-wrap td:last-child {
+  white-space: nowrap;
+}
+
+#atenderAviso .table-wrap button,
+#historialPeticiones .table-wrap button {
+  margin: 2px 3px;
+}
+
+#atenderAvisoBox .detail-modal-v46 {
+  max-width: 1180px;
+  margin: 12px auto 0;
+}
+
+#atenderAvisoBox .form-block {
+  border: 1px solid #D8E2EA;
+  border-radius: 8px;
+  background: #FFFFFF;
+  padding: 12px;
+}
+
+#atenderAvisoBox textarea {
+  min-height: 86px;
+  resize: vertical;
+}
+
+#historialPeticionesTable .empty-state {
+  min-height: 120px;
+}

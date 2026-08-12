@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mantto - Alimentos Cielo SAC</title>
+    <link rel="stylesheet" href="/static/styles.css?v=27">
+  </head>
+  <body>
+    <main id="loginView" class="login-shell">
+      <section class="login-panel">
+        <div class="login-brand">
+          <!-- LOGO EMPRESA:
+               colocar el logo oficial en:
+               /static/assets/logo-empresa.png
+               opcional para fondos azules:
+               /static/assets/logo-empresa-blanco.png
+          -->
+          <div class="logo-slot logo-slot-light">
+            <img src="/static/assets/logo-empresa.png" alt="Logo Alimentos Cielo" onerror="this.hidden=true; this.nextElementSibling.hidden=false;">
+            <span hidden>LOGO EMPRESA</span>
+          </div>
+          <div>
+            <p class="eyebrow">Alimentos Cielo S.A.C.</p>
+            <h1>MANTTO</h1>
+            <p>Sistema de Gestion de Mantenimiento</p>
+          </div>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label>Usuario<input id="loginUser" autocomplete="username" required></label>
+          <label>Clave<input id="loginPass" type="password" autocomplete="current-password" required></label>
+          <button class="primary" type="submit">Ingresar</button>
+          <p id="loginMsg" class="msg"></p>
+        </form>
+      </section>
+    </main>
+
+    <main id="appView" class="app hidden" data-current-view="home">
+      <button id="menuToggle" class="mobile-menu" type="button" aria-label="Abrir menu">Menu</button>
+
+      <aside class="right-nav" aria-label="Navegacion principal">
+        <div class="sidebar-brand">
+          <div class="logo-slot logo-slot-dark">
+            <img src="/static/assets/logo-empresa-blanco.png" alt="Logo Alimentos Cielo" onerror="this.hidden=true; this.nextElementSibling.hidden=false;">
+            <span hidden>LOGO EMPRESA</span>
+          </div>
+          <h2>MANTTO</h2>
+          <p>Sistema de Gestion de Mantenimiento</p>
+        </div>
+
+        <nav class="nav-list">
+          <button data-view="home" class="active"><img src="/static/assets/icons/home.svg" alt="">Inicio</button>
+          <button data-view="aviso"><img src="/static/assets/icons/aviso.svg" alt="">Generar aviso</button>
+          <button data-view="ot"><img src="/static/assets/icons/ot.svg" alt="">Generar OT</button>
+          <button data-view="peticion"><img src="/static/assets/icons/peticion.svg" alt="">Peticiones</button>
+          <button data-view="almacen"><img src="/static/assets/icons/almacen.svg" alt="">Almacen</button>
+          <button data-view="cerrarOt"><img src="/static/assets/icons/cerrar-ot.svg" alt="">Cerrar OT's</button>
+          <button data-view="calificarOt"><img src="/static/assets/icons/calificar-ot.svg" alt="">Calificar OT</button>
+          <button data-view="historialCalificaciones"><img src="/static/assets/icons/calificaciones.svg" alt="">Historial de calificaciones</button>
+          <button data-view="historialOt"><img src="/static/assets/icons/historial.svg" alt="">Historial de OT</button>
+          <button data-view="cerrarAvisos"><img src="/static/assets/icons/cerrar-aviso.svg" alt="">Cerrar avisos</button>
+          <button data-view="config"><img src="/static/assets/icons/configuracion.svg" alt="">Configuracion</button>
+        </nav>
+
+        <div class="sidebar-user">
+          <div class="avatar" aria-hidden="true">U</div>
+          <div>
+            <strong id="sidebarUserName">Usuario</strong>
+            <span id="sidebarUserRole">Rol</span>
+          </div>
+          <button id="logoutBtn" class="logout-btn" type="button"><img src="/static/assets/icons/logout.svg" alt="">Cerrar sesion</button>
+        </div>
+      </aside>
+
+      <section class="app-shell">
+        <header class="topbar">
+          <div>
+            <h1>MANTTO</h1>
+            <p>Gestion de Mantenimiento Industrial</p>
+          </div>
+          <div class="topbar-user">
+            <div class="avatar" aria-hidden="true">U</div>
+            <div>
+              <strong id="topbarUserName">Usuario</strong>
+              <span id="topbarUserRole">Rol</span>
+            </div>
+          </div>
+        </header>
+
+        <section class="content-area">
+          <section class="home-screen" id="homeScreen">
+            <div class="dashboard-head">
+              <div>
+                <p class="eyebrow">Alimentos Cielo S.A.C.</p>
+                <h2>Gestion de Mantenimiento</h2>
+                <p>Centro de control para avisos, OT, peticiones, almacen y calificacion de servicios.</p>
+              </div>
+              <div class="system-status">
+                <strong>Estado del sistema</strong>
+                <span>Operativo</span>
+                <small id="dashboardClock">--:--</small>
+              </div>
+            </div>
+            <div id="dashboardKpis" class="kpi-grid"></div>
+            <div class="dashboard-layout">
+              <section class="dashboard-card">
+                <h3>OTs recientes</h3>
+                <div id="dashboardOts"></div>
+              </section>
+              <section class="dashboard-card">
+                <h3>Avisos recientes</h3>
+                <div id="dashboardAvisos"></div>
+              </section>
+              <section class="dashboard-card">
+                <h3>Actividad reciente</h3>
+                <div id="dashboardActividad"></div>
+              </section>
+            </div>
+            <div class="dashboard-layout charts-row">
+              <section class="dashboard-card">
+                <h3>OTs por estado</h3>
+                <div id="chartEstados" class="bar-chart"></div>
+              </section>
+              <section class="dashboard-card">
+                <h3>OTs por area</h3>
+                <div id="chartAreas" class="bar-chart"></div>
+              </section>
+            </div>
+          </section>
+
+          <section class="panel hidden" id="aviso">
+            <div class="screen-head">
+              <div><h2>Generar aviso</h2><p>Registre una incidencia usando los catalogos importados desde Excel.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <form id="avisoForm" class="form-grid">
+              <div class="form-block">
+                <h3>Seleccion de equipo</h3>
+                <div id="avisoEquipmentSelector" class="equipment-selector" data-target-form="avisoForm"></div>
+              </div>
+              <div id="avisoResumenSeleccion" class="selected-card">Seleccione los filtros para ver el resumen.</div>
+
+<input type="hidden" name="sede" id="avisoSede">
+<input type="hidden" name="rubro" id="avisoRubro">
+<input type="hidden" name="ubicacion" id="avisoUbicacion">
+<input type="hidden" name="proceso" id="avisoProceso">
+<input type="hidden" name="sistema" id="avisoSistema">
+<input type="hidden" name="equipo" id="avisoEquipo">
+<input type="hidden" name="sub_equipo" id="avisoSubEquipo">
+<input type="hidden" name="equipo_codigo" id="avisoEquipoCodigo">
+<input type="hidden" name="tipo_equipo" id="avisoTipoEquipo">
+              <div class="form-block">
+                <h3>Datos del aviso</h3>
+                <div class="form-block-grid">
+                  <label>Creado<input name="creado" id="avisoCreado" readonly></label>
+                  <label>Prioridad<select name="prioridad"><option>baja</option><option selected>media</option><option>alta</option><option>urgente</option></select></label>
+                  <label>Tipo de falla<select name="tipo_falla"><option>mecanica</option><option>electrica</option><option>instrumentacion</option><option>operativa</option><option>seguridad</option><option>otra</option></select></label>
+                  <label>Tipo de aviso<select name="tipo_aviso"><option>correctivo</option><option>preventivo</option><option>inspeccion</option><option>mejora</option><option>emergencia</option></select></label>
+                </div>
+              </div>
+              <div class="form-block">
+                <h3>Descripcion</h3>
+                <label>Descripcion<textarea name="descripcion" required></textarea></label>
+              </div>
+              <div class="form-actions span-full">
+                <button class="secondary" type="button" data-view="home">Cancelar</button>
+                <button class="primary" type="submit">Registrar aviso</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel hidden" id="ot">
+            <div class="screen-head">
+              <div><h2>Generar OT</h2><p>Registro por codigo o por filtros de equipo.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <form id="otForm" class="form-grid ot-fields">
+              <div class="form-block">
+                <h3>Seleccion de equipo</h3>
+                <div id="otEquipmentSelector" class="equipment-selector" data-target-form="otForm"></div>
+              </div>
+              <label>Interno / externo<select name="tipo_servicio" required><option>interno</option><option>externo</option></select></label>
+              <label>Registro equipo<select name="modo_equipo" id="modoEquipo"><option value="codigo">Por codigo</option><option value="filtro">Por filtro</option></select></label>
+              <label>Codigo equipo<input name="equipo_codigo" id="equipoCodigo" list="equiposList"></label>
+              <label>Sede<input name="sede"></label>
+              <label>Referencia<input name="referencia"></label>
+              <label>Ubicacion<input name="ubicacion"></label>
+              <label>Proceso<input name="proceso"></label>
+              <label>Sistema<input name="sistema"></label>
+              <label>Equipo<input name="equipo"></label>
+              <label>Sub-equipo<input name="sub_equipo"></label>
+              <label>Componente<input name="componente"></label>
+              <label>Tipo equipo<input name="tipo_equipo"></label>
+              <label>Tipo de falla<input name="tipo_falla" required></label>
+              <label>Tipo intervencion<input name="tipo_intervencion" required></label>
+              <label>Parada de linea<select name="parada_linea" required><option>No</option><option>Si</option></select></label>
+              <label>Tecnico 1<select name="tecnico_1" data-tecnico-select required></select></label>
+              <label>Tecnico 2<select name="tecnico_2" data-tecnico-select data-optional="true"></select></label>
+              <label>Hora inicio<input name="hora_inicio" type="time" required></label>
+              <label>Hora finalizacion<input name="hora_fin" type="time" required></label>
+              <label>Fecha intervencion<input name="fecha_intervencion" type="date" required></label>
+              <label class="span-2">Descripcion trabajo<textarea name="descripcion_trabajo" required></textarea></label>
+              <div class="form-actions span-full">
+                <button class="secondary" type="button" data-view="home">Cancelar</button>
+                <button class="primary" type="submit">Guardar OT</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel hidden" id="peticion">
+            <div class="screen-head">
+              <div><h2>Peticion de item</h2><p>Solicitud de producto, item o repuesto.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <form id="peticionForm" class="form-grid">
+              <label>OT<input name="ot_numero" list="otsList"></label>
+              <label>Codigo item<input name="item_codigo" id="itemCodigo" list="itemsList" required></label>
+              <label>Nombre item<input name="item_nombre" id="itemNombre" required></label>
+              <label>Cantidad<input name="cantidad" type="number" min="0" step="0.01" required></label>
+              <label>Unidad<input name="unidad" id="itemUnidad"></label>
+              <label class="span-2">Motivo<textarea name="motivo"></textarea></label>
+              <div class="form-actions span-full">
+                <button class="secondary" type="button" data-view="home">Cancelar</button>
+                <button class="primary" type="submit">Guardar peticion</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="panel hidden" id="almacen">
+            <div class="screen-head">
+              <div><h2>Almacen</h2><p>Consulta de repuestos, materiales, herramientas y stock disponible.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <div class="config-toolbar">
+              <label>Buscar en almacen<input id="almacenSearch" type="search" placeholder="Codigo, descripcion, categoria o ubicacion"></label>
+              <label>Tipo<select id="almacenTipo"><option value="">Todos</option><option value="productos">Productos</option><option value="repuestos">Repuestos</option></select></label>
+            </div>
+            <div id="almacenTable" class="table-wrap"></div>
+          </section>
+
+          <section class="panel hidden" id="atenderItem">
+            <div class="screen-head">
+              <div><h2>Atender item</h2><p>Peticiones pendientes de almacen.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <div id="peticionesPendientes" class="table-wrap"></div>
+          </section>
+
+          <section class="panel hidden" id="cerrarAvisos">
+            <div class="screen-head">
+              <div><h2>Cerrar avisos</h2><p>Revise avisos abiertos y conviertalos en OT conservando la relacion AVISO -> OT.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <div id="avisosPendientes" class="table-wrap"></div>
+            <div id="avisoOtBox" class="subpanel hidden">
+              <h3>Generar OT desde aviso</h3>
+              <p id="avisoSeleccionado"></p>
+              <form id="avisoOtForm" class="form-grid ot-fields"></form>
+            </div>
+          </section>
+
+          <section class="panel hidden" id="cerrarOt">
+            <div class="screen-head">
+              <div><h2>Cerrar OT's</h2><p>Seleccione una OT pendiente de cierre, registre el trabajo realizado y confirme el cierre.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <div class="close-ot-panel">
+              <div id="cerrarOtSummary" class="closing-summary"></div>
+              <form id="cerrarOtFilters" class="form-grid compact-form">
+                <label>Fecha desde<input name="desde" type="date"></label>
+                <label>Fecha hasta<input name="hasta" type="date"></label>
+                <label>Buscar OT<input name="q" type="search" placeholder="Codigo OT, area o equipo"></label>
+                <div class="form-actions span-full">
+                  <button class="secondary" type="button" data-date-range="today" data-filter-form="cerrarOtFilters">Hoy</button>
+                  <button class="secondary" type="button" data-date-range="yesterday" data-filter-form="cerrarOtFilters">Ayer</button>
+                  <button class="secondary" type="button" data-date-range="7days" data-filter-form="cerrarOtFilters">Ultimos 7 dias</button>
+                  <button class="secondary" type="button" data-date-range="month" data-filter-form="cerrarOtFilters">Este mes</button>
+                  <button class="secondary" type="button" data-date-range="all" data-filter-form="cerrarOtFilters">Todas</button>
+                  <button class="primary" type="submit">🔍 Buscar</button>
+                </div>
+              </form>
+              <div class="subpanel">
+                <h3>OT pendientes de cierre</h3>
+                <p class="muted">Solo aparecen las OT abiertas, asignadas o en ejecucion. Al cerrar una OT desaparece de esta lista y queda disponible para calificacion.</p>
+                <div id="otsPendientes" class="table-wrap close-ot-table"></div>
+              </div>
+            </div>
+            <div id="atenderOtBox" class="subpanel close-ot-detail hidden">
+              <h3>Cerrar OT</h3>
+              <p id="otSeleccionada"></p>
+              <form id="atenderOtForm" class="form-grid">
+                <label>Fecha de atencion<input name="fecha_atencion" type="date" required></label>
+                <label>Tecnico<div id="atenderOtPersonalSelector"></div><input name="tecnico" id="atenderOtTecnico" required></label>
+                <label>Estado final<select name="estado_final"><option>CERRADA</option></select></label>
+                <label class="span-2">Trabajo realizado<textarea name="trabajo_realizado" required></textarea></label>
+                <label class="span-2">Observaciones<textarea name="observaciones"></textarea></label>
+                <div class="form-actions span-full">
+                  <button class="secondary" type="button" id="cancelarAtenderOt">Cancelar</button>
+                  <button class="primary" type="submit">Cerrar OT</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <section class="panel hidden" id="calificarOt">
+            <div class="screen-head">
+              <div><h2>Calificar OT</h2><p>Seleccione una OT cerrada y use el boton ⭐ Calificar para abrir la encuesta de satisfaccion.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <form id="calificarOtFilters" class="form-grid compact-form">
+              <label>Fecha desde<input name="desde" type="date"></label>
+              <label>Fecha hasta<input name="hasta" type="date"></label>
+              <div class="form-actions span-full">
+                <button class="secondary" type="button" data-date-range="today" data-filter-form="calificarOtFilters">Hoy</button>
+                <button class="secondary" type="button" data-date-range="yesterday" data-filter-form="calificarOtFilters">Ayer</button>
+                <button class="secondary" type="button" data-date-range="7days" data-filter-form="calificarOtFilters">Ultimos 7 dias</button>
+                <button class="secondary" type="button" data-date-range="month" data-filter-form="calificarOtFilters">Este mes</button>
+                <button class="secondary" type="button" data-date-range="all" data-filter-form="calificarOtFilters">Todas</button>
+                <button class="primary" type="submit">Buscar</button>
+              </div>
+            </form>
+            <div class="subpanel">
+              <h3>Ordenes de trabajo</h3>
+              <p class="muted">Solo se muestran OT creadas. No se mezclan avisos ni otros registros.</p>
+              <div id="calificarOtTable" class="table-wrap"></div>
+            </div>
+          </section>
+
+          <section class="panel hidden" id="historialOt">
+            <div class="screen-head">
+              <div><h2>Historial de OT</h2><p>Pantalla independiente para consultar todas las OT, ver detalle, exportar, generar PDF e imprimir.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <form id="historialFilters" class="form-grid compact-form">
+              <label>Fecha desde<input name="desde" type="date"></label>
+              <label>Fecha hasta<input name="hasta" type="date"></label>
+              <label>Numero OT<input name="numero"></label>
+              <label>Area / sede<select name="sede" id="historialSede"></select></label>
+              <label>Equipo<input name="equipo"></label>
+              <label>Estado<select name="estado"><option value="">Todos</option><option>ABIERTA</option><option>ASIGNADA</option><option>EN EJECUCION</option><option>TERMINADA</option><option>CERRADA</option><option>CALIFICADA</option><option>CANCELADA</option></select></label>
+              <label>Prioridad<input name="prioridad" placeholder="Alta, media, critica"></label>
+              <label>Tipo mantenimiento<input name="tipo_mantenimiento" placeholder="Correctivo, preventivo..."></label>
+              <div class="form-actions span-full">
+                <button class="secondary" type="button" data-date-range="today" data-filter-form="historialFilters">Hoy</button>
+                <button class="secondary" type="button" data-date-range="yesterday" data-filter-form="historialFilters">Ayer</button>
+                <button class="secondary" type="button" data-date-range="7days" data-filter-form="historialFilters">Ultimos 7 dias</button>
+                <button class="secondary" type="button" data-date-range="month" data-filter-form="historialFilters">Este mes</button>
+                <button class="secondary" type="button" data-date-range="all" data-filter-form="historialFilters">Todas</button>
+                <button class="secondary" type="button" id="seleccionarTodasOt">Seleccionar todas</button>
+                <button class="secondary" type="button" id="exportarSeleccionadas">Generar PDF</button>
+                <button class="secondary" type="button" id="exportarHistorialExcel">Exportar Excel</button>
+                <button class="secondary" type="button" id="imprimirHistorialOt">Imprimir</button>
+                <button class="primary" type="submit">Buscar</button>
+              </div>
+            </form>
+            <div class="subpanel">
+              <h3>Historial de OT</h3>
+              <p class="muted">Registro completo de todas las OT generadas en el sistema.</p>
+              <div id="historialOtTable" class="table-wrap"></div>
+            </div>
+          </section>
+
+          <section class="panel hidden" id="historialCalificaciones">
+            <div class="screen-head">
+              <div><h2>Historial de calificaciones</h2><p>Consulta independiente de las evaluaciones realizadas a las OT.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <form id="calificacionesFilters" class="form-grid compact-form">
+              <label>Fecha desde<input name="desde" type="date"></label>
+              <label>Fecha hasta<input name="hasta" type="date"></label>
+              <label>Codigo OT<input name="numero"></label>
+              <label>Area<input name="area"></label>
+              <label>Usuario que califico<input name="usuario"></label>
+              <label>Calificacion minima<input name="minimo" type="number" min="1" max="5" step="0.1"></label>
+              <div class="form-actions span-full">
+                <button class="secondary" type="button" data-date-range="today" data-filter-form="calificacionesFilters">Hoy</button>
+                <button class="secondary" type="button" data-date-range="yesterday" data-filter-form="calificacionesFilters">Ayer</button>
+                <button class="secondary" type="button" data-date-range="7days" data-filter-form="calificacionesFilters">Ultimos 7 dias</button>
+                <button class="secondary" type="button" data-date-range="month" data-filter-form="calificacionesFilters">Este mes</button>
+                <button class="secondary" type="button" data-date-range="all" data-filter-form="calificacionesFilters">Todas</button>
+                <button class="primary" type="submit">Buscar</button>
+              </div>
+            </form>
+            <div class="subpanel">
+              <h3>Calificaciones registradas</h3>
+              <p class="muted">Esta pantalla no se usa para calificar; solo consulta calificaciones guardadas.</p>
+              <div id="historialCalificacionesTable" class="table-wrap"></div>
+            </div>
+          </section>
+
+          <section class="panel hidden" id="config">
+            <div class="screen-head">
+              <div><h2>Configuracion</h2><p>Tablas maestras, importacion Excel y usuarios.</p></div>
+              <button class="back-btn" data-view="home">Volver</button>
+            </div>
+            <div class="tabs config-cards">
+              <button data-tab="equipos" class="active"><strong>DB Equipos</strong><span>Importar y consultar maestro de equipos</span></button>
+              <button data-tab="personal"><strong>DB Personal</strong><span>Importar y consultar personal</span></button>
+              <button data-tab="repuestos"><strong>DB Repuestos</strong><span>Importar y consultar repuestos</span></button>
+              <button data-tab="usuarios"><strong>DB Usuarios</strong><span>Gestionar acceso</span></button>
+            </div>
+            <div id="configContent"></div>
+          </section>
+        </section>
+      </section>
+
+      <datalist id="equiposList"></datalist>
+      <datalist id="personalList"></datalist>
+      <datalist id="itemsList"></datalist>
+      <datalist id="otsList"></datalist>
+      <div id="toast" class="toast hidden" role="status"></div>
+      <div id="confirmBox" class="confirm-box hidden" role="status">
+        <strong id="confirmTitle">Proceso completado</strong>
+        <span id="confirmDetail"></span>
+      </div>
+      <div id="actionConfirm" class="modal hidden" role="dialog" aria-modal="true">
+        <div class="modal-card">
+          <h3 id="actionConfirmTitle">Confirmar registro</h3>
+          <div id="actionConfirmDetail"></div>
+          <div class="modal-actions">
+            <button id="actionCancel" class="secondary" type="button">Cancelar</button>
+            <button id="actionOk" class="primary" type="button">Confirmar registro</button>
+          </div>
+        </div>
+      </div>
+      <div id="serviceRatingModal" class="modal hidden rating-modal" role="dialog" aria-modal="true">
+        <div class="modal-card rating-modal-card">
+          <div class="rating-modal-head">
+            <h3>Encuesta de satisfaccion de la OT</h3>
+            <p>Complete los cuatro criterios y baje hasta el final para guardar la calificacion.</p>
+          </div>
+          <form id="ratingForm" class="rating-form">
+            <div class="rating-modal-body">
+              <div id="ratingSummary"></div>
+              <p class="rating-scale">1 = Muy insatisfecho · 2 = Insatisfecho · 3 = Regular · 4 = Satisfecho · 5 = Muy satisfecho</p>
+              <div id="ratingFactors" class="rating-factors"></div>
+              <div class="rating-average"><strong>Promedio general:</strong> <span id="ratingAverage">0.0 / 5</span></div>
+              <label>Comentarios / observaciones<textarea name="comentario" placeholder="Escriba aqui alguna observacion..."></textarea></label>
+            </div>
+            <div class="modal-actions rating-modal-actions">
+              <button id="ratingCancel" class="secondary" type="button">Cancelar</button>
+              <button class="primary" type="submit">✓ Guardar calificacion</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </main>
+
+    <script src="/static/app.js?v=75"></script>
+  </body>
+</html>
