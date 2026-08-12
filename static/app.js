@@ -107,8 +107,8 @@ const MANTTO_CATEGORIAS_REPUESTOS = [
 ];
 
 function manttoWarehouse3dUrl(embedded = false) {
-  const file = "warehouse3d_v66/warehouse3d.html";
-  const query = embedded ? "?embedded=1&v=66" : "?v=66";
+  const file = "warehouse3d_v68/warehouse3d.html";
+  const query = embedded ? "?embedded=1&v=69" : "?v=69";
   const match = window.location.pathname.match(/^\/networks\/([^/]+)\//);
   if (match) return `/networks/${match[1]}/${file}${query}`;
   return `/static/${file}${query}`;
@@ -556,6 +556,7 @@ function ensureManttoV46Ui() {
           </label>
           <button type="button" class="secondary" onclick="centrarPedidoAceptado3D()">Vista general</button>
         </div>
+        <div id="pedidoAceptadoCategorias" class="accepted-category-grid"></div>
         <div id="pedidosAceptadosTable" class="accepted-orders-list"></div>
         <div id="pedidoAceptadoMapa" class="warehouse-location-card hidden"></div>
       </aside>
@@ -633,26 +634,30 @@ function ensureManttoV51VisibilityCss() {
       grid-template-columns: minmax(0, 1fr) 380px;
       gap: 16px;
       align-items: stretch;
-      min-height: min(760px, calc(100vh - 170px));
+      min-height: 760px;
+      height: min(820px, calc(100vh - 140px));
     }
     .accepted-wms-stage {
-      min-height: 620px;
+      min-height: 720px;
+      height: 100%;
       border: 1px solid var(--line);
       border-radius: var(--radius);
       overflow: hidden;
-      background: #0f172a;
+      background: #dbeafe;
       box-shadow: var(--shadow);
     }
     .accepted-wms-stage iframe {
       width: 100%;
       height: 100%;
+      min-height: 720px;
       border: 0;
       display: block;
+      background: #dbeafe;
     }
     .accepted-wms-side {
       min-height: 0;
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto auto minmax(0, 1fr);
       gap: 12px;
     }
     .accepted-wms-tools {
@@ -670,7 +675,7 @@ function ensureManttoV51VisibilityCss() {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 8px;
-      max-height: 258px;
+      max-height: 280px;
       overflow: auto;
     }
     .accepted-category-card {
@@ -4059,7 +4064,9 @@ async function renderPedidosAceptados() {
 
 function filtrarComponentesAceptados(componentes) {
   const q = normalizeText(state.pedidoAceptadoSearch || "");
+  const categoria = state.pedidoAceptadoCategoria || "todas";
   return (componentes || [])
+    .filter((item) => categoria === "todas" || item.categoria_id === categoria)
     .filter((item) => !q || normalizeText(`${item.pedidoNumero} ${item.codigo} ${item.nombre} ${item.descripcion} ${item.modelo} ${item.ubicacion} ${item.categoria}`).includes(q));
 }
 

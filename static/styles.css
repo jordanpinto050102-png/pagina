@@ -1324,6 +1324,7 @@ tr:last-child td { border-bottom: 0; }
 
 
 
+
 .app[data-current-view="historialPeticiones"] #historialPeticiones,
 .app[data-current-view="kardex"] #kardex,
 .app[data-current-view="ingresoItem"] #ingresoItem,
@@ -1942,7 +1943,7 @@ tr:last-child td { border-bottom: 0; }
   }
 }
 
-/* v66: peticiones por categorias y 3D estable */
+/* v67: peticiones por categorias y 3D estable */
 #peticionCatalogHost {
   width: 100%;
 }
@@ -2005,6 +2006,288 @@ tr:last-child td { border-bottom: 0; }
 }
 @media (max-width: 1180px) {
   .accepted-wms-layout {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+.warehouse3d-frame,
+#warehouse3dFrame,
+iframe[src*="warehouse3d"] {
+  width: 100% !important;
+  height: 720px !important;
+  min-height: 620px !important;
+  display: block !important;
+  border: 0;
+  background: #dbeafe;
+}
+
+.accepted-wms-layout {
+  min-height: 760px !important;
+  height: min(820px, calc(100vh - 140px)) !important;
+}
+
+.accepted-wms-stage,
+.warehouse3d-shell {
+  min-height: 720px !important;
+  height: 100% !important;
+  background: #dbeafe !important;
+}
+
+.accepted-wms-stage iframe,
+.warehouse3d-shell iframe,
+iframe[src*="warehouse3d"] {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 720px !important;
+  display: block !important;
+  border: 0 !important;
+  background: #dbeafe !important;
+}
+
+.accepted-wms-side {
+  grid-template-rows: auto auto minmax(0, 1fr) !important;
+}
+
+#pedidoAceptadoCategorias.accepted-category-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 8px !important;
+  max-height: 280px !important;
+  overflow: auto !important;
+}
+
+
+/* v70 - Aprovechar mejor el ancho disponible en todas las pantallas */
+:root {
+  --mantto-page-max: 1720px;
+  --mantto-wide-max: 1880px;
+}
+
+.app-shell {
+  min-width: 0 !important;
+}
+
+.content-area {
+  width: 100% !important;
+  max-width: none !important;
+  padding-left: clamp(14px, 1.4vw, 26px) !important;
+  padding-right: clamp(14px, 1.4vw, 26px) !important;
+}
+
+.panel,
+.home-screen,
+#homeScreen {
+  width: min(100%, var(--mantto-page-max)) !important;
+  max-width: var(--mantto-page-max) !important;
+}
+
+.panel {
+  padding: clamp(18px, 1.45vw, 28px) !important;
+}
+
+#pedidosAceptados,
+#peticion,
+#almacen,
+#kardex,
+#historialPeticiones,
+#historialOt,
+#historialCalificaciones,
+#atenderAviso,
+#ot,
+#aviso,
+#cerrarOt,
+#calificarOt,
+#ingresoItem,
+#config {
+  width: min(100%, var(--mantto-wide-max)) !important;
+  max-width: var(--mantto-wide-max) !important;
+}
+
+.screen-head {
+  width: 100% !important;
+}
+
+.table-wrap,
+.subpanel,
+.form-block,
+.dashboard-card,
+.config-toolbar {
+  width: 100% !important;
+  max-width: none !important;
+}
+
+.form-grid {
+  grid-template-columns: repeat(3, minmax(220px, 1fr)) !important;
+}
+
+.form-block-grid {
+  grid-template-columns: repeat(4, minmax(190px, 1fr)) !important;
+}
+
+.filter-grid {
+  grid-template-columns: repeat(4, minmax(190px, 1fr)) !important;
+}
+
+.kpi-grid {
+  grid-template-columns: repeat(6, minmax(150px, 1fr)) !important;
+}
+
+.dashboard-layout {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+.charts-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
+.config-cards {
+  grid-template-columns: repeat(5, minmax(180px, 1fr)) !important;
+}
+
+.accepted-wms-layout {
+  grid-template-columns: minmax(720px, 1fr) minmax(360px, 440px) !important;
+  gap: 18px !important;
+  min-height: min(820px, calc(100vh - 130px)) !important;
+  height: min(840px, calc(100vh - 126px)) !important;
+}
+
+.accepted-wms-stage,
+.warehouse3d-shell {
+  min-width: 0 !important;
+  min-height: 700px !important;
+}
+
+.accepted-wms-stage iframe,
+.warehouse3d-shell iframe,
+iframe[src*="warehouse3d"] {
+  min-height: 700px !important;
+}
+
+.accepted-wms-side {
+  min-width: 360px !important;
+}
+
+#pedidoAceptadoCategorias.accepted-category-grid,
+.accepted-category-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  max-height: 250px !important;
+}
+
+.peticion-wms-layout-v65 {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px) !important;
+  gap: 18px !important;
+  align-items: start !important;
+}
+
+.peticion-category-grid-large {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)) !important;
+  gap: 16px !important;
+}
+
+.peticion-category-cover {
+  min-height: 172px !important;
+  grid-template-columns: 132px minmax(0, 1fr) !important;
+}
+
+.peticion-category-group.is-open {
+  grid-column: 1 / -1 !important;
+}
+
+.peticion-category-list-open,
+.peticion-category-list {
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)) !important;
+}
+
+.peticion-material-row {
+  grid-template-columns: minmax(260px, 1fr) 130px 128px auto !important;
+}
+
+.almacen-category-quick-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)) !important;
+}
+
+.inventory-category-summary {
+  grid-template-columns: repeat(4, minmax(180px, 1fr)) !important;
+}
+
+table {
+  min-width: 1080px !important;
+}
+
+.close-ot-table table,
+#historialOt table,
+#historialPeticiones table,
+#kardex table,
+#almacen table {
+  min-width: 1260px !important;
+}
+
+@media (min-width: 1600px) {
+  .content-area {
+    padding-left: 34px !important;
+    padding-right: 34px !important;
+  }
+
+  .accepted-wms-layout {
+    grid-template-columns: minmax(900px, 1fr) 430px !important;
+  }
+
+  .peticion-category-grid-large {
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)) !important;
+  }
+}
+
+@media (max-width: 1280px) {
+  .accepted-wms-layout,
+  .peticion-wms-layout-v65 {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+  }
+
+  .accepted-wms-side {
+    min-width: 0 !important;
+  }
+
+  .accepted-wms-stage,
+  .accepted-wms-stage iframe,
+  .warehouse3d-shell iframe,
+  iframe[src*="warehouse3d"] {
+    min-height: 560px !important;
+  }
+
+  .form-grid,
+  .form-block-grid,
+  .filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .content-area {
+    padding-left: 10px !important;
+    padding-right: 10px !important;
+  }
+
+  .panel {
+    padding: 14px !important;
+  }
+
+  .form-grid,
+  .form-block-grid,
+  .filter-grid,
+  .kpi-grid,
+  .dashboard-layout,
+  .charts-row,
+  .config-cards,
+  .inventory-category-summary,
+  .peticion-category-grid-large,
+  .peticion-category-list-open,
+  .peticion-category-list {
+    grid-template-columns: 1fr !important;
+  }
+
+  .peticion-category-cover,
+  .peticion-material-row {
     grid-template-columns: 1fr !important;
   }
 }

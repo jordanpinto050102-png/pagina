@@ -3,12 +3,12 @@ import { CONFIG_ALMACEN, parseUbicacion } from "./warehouse-data.js";
 import { DIMENSIONES_ALMACEN, pisosLayout } from "./warehouse-layout.js";
 
 const materials = {
-  floor: new THREE.MeshStandardMaterial({ color: 0xe8eef5, roughness: 0.72 }),
-  rackFrame: new THREE.MeshStandardMaterial({ color: 0x475569, roughness: 0.55, transparent: true, opacity: 0.58 }),
-  normal: new THREE.MeshStandardMaterial({ color: 0xd7e8f7, roughness: 0.5, emissive: 0x13263a }),
-  stock: new THREE.MeshStandardMaterial({ color: 0x62c5ef, roughness: 0.55 }),
-  pedido: new THREE.MeshStandardMaterial({ color: 0xffc72c, roughness: 0.42, emissive: 0x4a3100 }),
-  selected: new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.38, emissive: 0x063449 }),
+  floor: new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.72 }),
+  rackFrame: new THREE.MeshStandardMaterial({ color: 0x1f4e79, roughness: 0.48, transparent: true, opacity: 0.72 }),
+  normal: new THREE.MeshStandardMaterial({ color: 0xa9d7f5, roughness: 0.42, emissive: 0x102f4f, emissiveIntensity: 0.18 }),
+  stock: new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.48, emissive: 0x063449, emissiveIntensity: 0.16 }),
+  pedido: new THREE.MeshStandardMaterial({ color: 0xffc72c, roughness: 0.36, emissive: 0x5a3b00, emissiveIntensity: 0.42 }),
+  selected: new THREE.MeshStandardMaterial({ color: 0x22d3ee, roughness: 0.3, emissive: 0x09576d, emissiveIntensity: 0.58 }),
   error: new THREE.MeshStandardMaterial({ color: 0xd64545, roughness: 0.42 }),
   door: new THREE.MeshStandardMaterial({ color: 0xf4b400, roughness: 0.5, emissive: 0x3a2500 }),
   wall: new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.72, transparent: true, opacity: 0.28 }),
@@ -65,9 +65,16 @@ export function buildWarehouseScene(scene, componentes = []) {
   floor.receiveShadow = true;
   group.add(floor);
 
-  const aisle = new THREE.GridHelper(Math.max(DIMENSIONES_ALMACEN.piso.ancho, DIMENSIONES_ALMACEN.piso.largo), 32, 0x9fb3c8, 0xd5e0ea);
+  const aisle = new THREE.GridHelper(Math.max(DIMENSIONES_ALMACEN.piso.ancho, DIMENSIONES_ALMACEN.piso.largo), 32, 0x0f4c81, 0xb7c7d8);
   aisle.position.y = 0;
   group.add(aisle);
+
+  const originMarker = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.38, 0.38, 0.12, 32),
+    new THREE.MeshBasicMaterial({ color: 0xffc72c })
+  );
+  originMarker.position.set(0, 0.08, 0);
+  group.add(originMarker);
 
   const axes = new THREE.AxesHelper(4);
   axes.position.set(-DIMENSIONES_ALMACEN.piso.ancho / 2 + 2.5, 0.08, -DIMENSIONES_ALMACEN.piso.largo / 2 + 2.5);
@@ -104,10 +111,17 @@ export function buildWarehouseScene(scene, componentes = []) {
     frame.scale.set(1, 1, 1);
     rack.add(frame);
 
+    const edge = new THREE.LineSegments(
+      new THREE.EdgesGeometry(frame.geometry),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.78 })
+    );
+    edge.position.copy(frame.position);
+    rack.add(edge);
+
     for (let nivel = 1; nivel <= levels; nivel += 1) {
       for (let posicion = 1; posicion <= positions; posicion += 1) {
         const cell = new THREE.Mesh(
-          new THREE.BoxGeometry(slotW - 0.04, levelH - (dimensions.separacionNivel || 0.08), dimensions.profundidad - 0.12),
+          new THREE.BoxGeometry(Math.max(0.12, slotW - 0.035), levelH - (dimensions.separacionNivel || 0.08), dimensions.profundidad - 0.08),
           materials.normal.clone()
         );
         const cx = -dimensions.ancho / 2 + slotW * (posicion - 0.5);
@@ -116,6 +130,11 @@ export function buildWarehouseScene(scene, componentes = []) {
         const codigoUbicacion = `ALM-R${rackNumber}-P${nivel}-F${posicion}`;
         cell.userData = { type: "slot", codigoUbicacion, almacen: "ALM", rack: rackConfig.id, rackNumber, piso: piso.id, nivel, posicion };
         rack.add(cell);
+        const cellEdge = new THREE.LineSegments(
+          new THREE.EdgesGeometry(cell.geometry),
+          new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.34 })
+        );
+        cell.add(cellEdge);
         positionMap.set(codigoUbicacion, cell);
         if (posicion === 1) positionMap.set(`ALM-R${rackNumber}-P${nivel}`, cell);
       }

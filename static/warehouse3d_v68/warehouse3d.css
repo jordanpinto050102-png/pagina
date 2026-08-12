@@ -87,7 +87,7 @@ button:hover { filter: brightness(0.98); }
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow: hidden;
-  background: #0f172a;
+  background: #dbeafe;
   box-shadow: var(--shadow);
   touch-action: none;
 }
@@ -254,7 +254,7 @@ body.design-mode .warehouse-stage {
 .warehouse-fallback-map {
   position: absolute;
   inset: 62px 22px 22px;
-  z-index: 3;
+  z-index: 0;
   display: grid;
   align-content: center;
   gap: 14px;
@@ -264,6 +264,15 @@ body.design-mode .warehouse-stage {
   color: #fff;
   padding: 18px;
   text-align: center;
+  pointer-events: none;
+}
+
+.warehouse-fallback-map.is-rendered {
+  display: none;
+}
+
+.warehouse-fallback-map.is-error {
+  background: rgba(127, 29, 29, .88);
 }
 
 .fallback-racks {
@@ -289,4 +298,24 @@ body.design-mode .warehouse-stage {
   .warehouse-stage {
     min-height: 480px;
   }
+}
+
+/* v72 diagnostics and canvas stability */
+.warehouse-diagnostic {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 6;
+  border-radius: 999px;
+  background: rgba(255,255,255,.92);
+  color: #0b3b66;
+  padding: 7px 11px;
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 10px 22px rgba(15,23,42,.18);
+  pointer-events: none;
+}
+.warehouse-canvas {
+  min-height: 420px;
+  background: #dbeafe;
 }

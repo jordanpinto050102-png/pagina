@@ -27,9 +27,17 @@ export function focusObject(camera, controls, object, offset = new THREE.Vector3
   if (!object) return;
   const target = new THREE.Vector3();
   object.getWorldPosition(target);
-  animateCamera(camera, controls, target.clone().add(offset), target);
+  animateCamera(camera, controls, target.clone().add(offset), target, 700);
 }
 
 export function generalView(camera, controls) {
-  animateCamera(camera, controls, new THREE.Vector3(0, 24, 34), new THREE.Vector3(0, 1.9, 0), 950);
+  animateCamera(camera, controls, new THREE.Vector3(0, 18, 26), new THREE.Vector3(0, 1.6, 0), 700);
+}
+
+export function setGeneralViewNow(camera, controls) {
+  camera.position.set(0, 18, 26);
+  controls.target.set(0, 1.6, 0);
+  camera.lookAt(controls.target);
+  camera.updateProjectionMatrix();
+  controls.update();
 }
