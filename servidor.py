@@ -1,4 +1,5 @@
 from io import BytesIO
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -22,7 +23,7 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from db import (
-    connect,
+    connect as raw_connect,
     create_session,
     get_user_by_token,
     hash_password,
@@ -49,6 +50,21 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+def norm_text(value):
+    text = unicodedata.normalize("NFD", str(value or ""))
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = re.sub(r"[_\-.]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip().lower()
+    return text
+
+
+@contextmanager
+def connect():
+    with raw_connect() as conn:
+        conn.create_function("norm_text", 1, norm_text)
+        yield conn
+
+
 class LoginIn(BaseModel):
     username: str
     password: str
@@ -60,6 +76,7 @@ class UserIn(BaseModel):
     full_name: Optional[str] = ""
     apellidos: Optional[str] = ""
     dni_codigo: Optional[str] = ""
+    sede: Optional[str] = ""
     area: Optional[str] = ""
     cargo: Optional[str] = ""
     role: str = "tecnico"
@@ -71,6 +88,7 @@ class UserUpdateIn(BaseModel):
     full_name: Optional[str] = None
     apellidos: Optional[str] = None
     dni_codigo: Optional[str] = None
+    sede: Optional[str] = None
     area: Optional[str] = None
     cargo: Optional[str] = None
     role: Optional[str] = None
@@ -215,6 +233,7 @@ class InventarioIngresoIn(BaseModel):
     codigo: str
     descripcion: str
     unidad: Optional[str] = ""
+    sede: Optional[str] = ""
     tipo: Optional[str] = ""
     categoria: Optional[str] = ""
     area: Optional[str] = ""
@@ -228,20 +247,259 @@ class InventarioIngresoIn(BaseModel):
     observacion: Optional[str] = ""
 
 
-def current_user(authorization: Optional[str] = Header(default=None)):
+def table_exists(conn, table):
+    row = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+    return bool(row)
+
+
+def distinct_sedes_conn(conn):
+    if not table_exists(conn, "equipos"):
+        return []
+    columns = set(mtto_table_columns(conn, "equipos"))
+    if "sede" not in columns:
+        return []
+    found = {}
+    for row in conn.execute(
+        """
+        SELECT DISTINCT TRIM(COALESCE(sede, '')) AS sede
+        FROM equipos
+        WHERE sede IS NOT NULL AND TRIM(sede) <> ''
+        ORDER BY sede
+        """
+    ).fetchall():
+        raw = str(row["sede"] or "").strip()
+        key = norm_text(raw)
+        if key and key not in found:
+            found[key] = raw.upper()
+    return list(found.values())
+
+
+def canonical_sede_conn(conn, value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    key = norm_text(raw)
+    for sede in distinct_sedes_conn(conn):
+        if norm_text(sede) == key:
+            return sede
+    return raw.upper()
+
+
+def personal_profile_conn(conn, user):
+    if not table_exists(conn, "personal"):
+        return None
+    columns = set(mtto_table_columns(conn, "personal"))
+    if "sede" not in columns:
+        return None
+    candidates = [
+        user.get("username"),
+        user.get("full_name"),
+        user.get("dni_codigo"),
+        user.get("nombre"),
+    ]
+    predicates = []
+    params = []
+    if "nombre" in columns:
+        for value in candidates[:2]:
+            if value:
+                predicates.append("norm_text(COALESCE(nombre, '')) = norm_text(?)")
+                params.append(value)
+    if "codigo" in columns and user.get("dni_codigo"):
+        predicates.append("norm_text(COALESCE(codigo, '')) = norm_text(?)")
+        params.append(user.get("dni_codigo"))
+    if "clave" in columns:
+        for value in candidates:
+            if value:
+                predicates.append("norm_text(COALESCE(clave, '')) = norm_text(?)")
+                params.append(value)
+    if not predicates:
+        return None
+    sql = f"SELECT * FROM personal WHERE {' OR '.join(predicates)} LIMIT 1"
+    return conn.execute(sql, params).fetchone()
+
+
+def full_user_record_conn(conn, user):
+    base = dict(user or {})
+    username = str(base.get("username") or "").strip()
+    if not username or not table_exists(conn, "users"):
+        return base
+    row = conn.execute("SELECT * FROM users WHERE username = ? LIMIT 1", (username,)).fetchone()
+    if not row:
+        return base
+    data = dict(row)
+    for key, value in base.items():
+        if key not in data or data.get(key) in (None, ""):
+            data[key] = value
+    return data
+
+
+def enrich_user_context_conn(conn, user, x_sede_scope=""):
+    data = full_user_record_conn(conn, user)
+    profile = personal_profile_conn(conn, data)
+    if profile:
+        for key in ("sede", "area", "cargo"):
+            if key in profile.keys() and not str(data.get(key) or "").strip():
+                data[key] = profile[key]
+        if "nombre" in profile.keys() and not str(data.get("full_name") or "").strip():
+            data["full_name"] = profile["nombre"]
+    data["role"] = normalize_role(data.get("role") or data.get("cargo") or "")
+    data["sede"] = canonical_sede_conn(conn, data.get("sede") or "")
+    selected = str(x_sede_scope or "").strip()
+    if is_admin_user(data) and selected and norm_text(selected) not in {"todas", "todas las sedes", "all"}:
+        allowed = canonical_sede_conn(conn, selected)
+        if allowed and any(norm_text(allowed) == norm_text(s) for s in distinct_sedes_conn(conn)):
+            data["_sede_scope"] = allowed
+    return data
+
+
+def current_user(authorization: Optional[str] = Header(default=None), x_sede_scope: Optional[str] = Header(default="")):
     token = ""
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
     user = get_user_by_token(token)
     if not user:
         raise HTTPException(status_code=401, detail="Sesion no valida")
-    return user
+    with connect() as conn:
+        return enrich_user_context_conn(conn, user, x_sede_scope)
 
 
 def require_admin(user=Depends(current_user)):
-    if user["role"] != "admin":
+    if not is_admin_user(user):
         raise HTTPException(status_code=403, detail="Solo administrador")
     return user
+
+
+def is_admin_user(user):
+    role = norm_text(normalize_role(user.get("role") or ""))
+    return role in {"admin", "administrador"}
+
+
+def user_sede(user):
+    return canonical_sede(
+        user.get("sede")
+        or user.get("SEDE")
+        or user.get("planta")
+        or user.get("local")
+        or user.get("centro")
+        or user.get("sucursal")
+        or ""
+    )
+
+
+def public_user_context(user):
+    sede = user_sede(user)
+    role = normalize_role(user.get("role") or "")
+    if is_admin_user(user):
+        role = "admin"
+    return {
+        "username": user.get("username") or "",
+        "full_name": user.get("full_name") or user.get("username") or "",
+        "role": role,
+        "sede": sede,
+        "sede_norm": norm_text(sede),
+        "area": user.get("area") or "",
+        "cargo": user.get("cargo") or "",
+        "is_admin": role == "admin",
+    }
+
+
+def canonical_sede(value):
+    return str(value or "").strip().upper()
+
+
+def normalize_role(value):
+    role = norm_text(value)
+    role_map = {
+        "administrador": "admin",
+        "admin": "admin",
+        "jefe de area": "jefe",
+        "jefe area": "jefe",
+        "jefe": "jefe",
+        "supervisor": "supervisor",
+        "mantenimiento": "tecnico",
+        "tecnico": "tecnico",
+        "solicitante": "tecnico",
+        "almacen": "almacen",
+        "almacenero": "almacen",
+    }
+    return role_map.get(role, role if role in {"admin", "supervisor", "jefe", "tecnico", "almacen"} else "tecnico")
+
+
+def sede_scope_sql(user, alias="", inventory=False):
+    if is_admin_user(user) and not user.get("_sede_scope"):
+        return "", []
+    sede = user.get("_sede_scope") if is_admin_user(user) else user_sede(user)
+    if not sede:
+        return " AND 1 = 0", []
+    prefix = f"{alias}." if alias else ""
+    column = "sede"
+    return f" AND norm_text(COALESCE({prefix}{column}, '')) = norm_text(?)", [sede]
+
+
+def sede_scope_sql_expr(user, expr):
+    if is_admin_user(user) and not user.get("_sede_scope"):
+        return "", []
+    sede = user.get("_sede_scope") if is_admin_user(user) else user_sede(user)
+    if not sede:
+        return " AND 1 = 0", []
+    return f" AND norm_text(COALESCE({expr}, '')) = norm_text(?)", [sede]
+
+
+def effective_sede_scope(user):
+    if is_admin_user(user):
+        return user.get("_sede_scope") or ""
+    return user_sede(user)
+
+
+def assert_row_sede(row, user, label="Registro"):
+    if is_admin_user(user):
+        return
+    sede = user_sede(user)
+    if not sede:
+        raise HTTPException(status_code=403, detail="Usuario sin sede asignada")
+    row_sede = row["sede"] if row and "sede" in row.keys() else ""
+    if norm_text(row_sede) != norm_text(sede):
+        raise HTTPException(status_code=403, detail=f"{label} fuera de la sede del usuario")
+
+
+def peticion_sede_scope_sql(user, user_alias="u", personal_alias="per"):
+    if is_admin_user(user) and not user.get("_sede_scope"):
+        return "", []
+    sede = user.get("_sede_scope") if is_admin_user(user) else user_sede(user)
+    if not sede:
+        return " AND 1 = 0", []
+    return f" AND norm_text(COALESCE(NULLIF(p.sede, ''), {user_alias}.sede, {personal_alias}.sede, '')) = norm_text(?)", [sede]
+
+
+def movimiento_sede_scope_sql(user):
+    if is_admin_user(user) and not user.get("_sede_scope"):
+        return "", []
+    sede = user.get("_sede_scope") if is_admin_user(user) else user_sede(user)
+    if not sede:
+        return " AND 1 = 0", []
+    return " AND norm_text(COALESCE(NULLIF(m.sede, ''), p.sede, u.sede, per.sede, '')) = norm_text(?)", [sede]
+
+
+def assert_peticion_scope(conn, numero, user):
+    if is_admin_user(user):
+        return
+    sede = user_sede(user)
+    if not sede:
+        raise HTTPException(status_code=403, detail="Usuario sin sede asignada")
+    allowed = conn.execute(
+        """
+        SELECT p.numero
+        FROM peticiones p
+        LEFT JOIN users u ON u.username = p.usuario
+        LEFT JOIN personal per ON norm_text(COALESCE(per.nombre, '')) = norm_text(COALESCE(u.full_name, p.usuario, ''))
+        WHERE p.numero = ?
+          AND norm_text(COALESCE(NULLIF(p.sede, ''), u.sede, per.sede, '')) = norm_text(?)
+        LIMIT 1
+        """,
+        (numero, sede),
+    ).fetchone()
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Peticion fuera de la sede del usuario")
 
 
 def is_jefe_user(user):
@@ -332,6 +590,12 @@ def mtto_ensure_column(conn, table, column, definition):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
+def canonicalize_existing_sedes(conn):
+    # La comparacion de sedes se normaliza en consultas; no se reescriben
+    # datos historicos automaticamente para evitar cambiar valores importados.
+    return
+
+
 def registrar_evento(conn, ot_numero, evento, estado, usuario, tecnico="", detalle=""):
     conn.execute(
         """
@@ -378,6 +642,7 @@ def init_mantto_extra_schema():
 
         for table in ("productos", "repuestos"):
             for column, definition in [
+                ("sede", "TEXT DEFAULT ''"),
                 ("tipo", "TEXT DEFAULT ''"),
                 ("categoria", "TEXT DEFAULT ''"),
                 ("area", "TEXT DEFAULT ''"),
@@ -392,10 +657,12 @@ def init_mantto_extra_schema():
                 mtto_ensure_column(conn, table, column, definition)
 
         mtto_ensure_column(conn, "peticiones", "criticidad", "TEXT DEFAULT ''")
+        mtto_ensure_column(conn, "peticiones", "sede", "TEXT DEFAULT ''")
 
         for column, definition in [
             ("apellidos", "TEXT DEFAULT ''"),
             ("dni_codigo", "TEXT DEFAULT ''"),
+            ("sede", "TEXT DEFAULT ''"),
             ("area", "TEXT DEFAULT ''"),
             ("cargo", "TEXT DEFAULT ''"),
         ]:
@@ -455,6 +722,7 @@ def init_mantto_extra_schema():
             CREATE TABLE IF NOT EXISTS inventario_movimientos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 peticion_numero TEXT NOT NULL,
+                sede TEXT DEFAULT '',
                 tabla TEXT DEFAULT '',
                 item_id INTEGER,
                 item_codigo TEXT NOT NULL,
@@ -469,29 +737,49 @@ def init_mantto_extra_schema():
             )
             """
         )
+        mtto_ensure_column(conn, "inventario_movimientos", "sede", "TEXT DEFAULT ''")
+        canonicalize_existing_sedes(conn)
 
 
 init_mantto_extra_schema()
 
 
-def validar_tecnico_conn(conn, nombre):
+def validar_tecnico_conn(conn, nombre, user=None):
     nombre = str(nombre or "").strip()
     if not nombre:
         raise HTTPException(status_code=400, detail="Tecnico responsable obligatorio")
+    sede_sql = ""
+    params = [nombre]
+    if user and not is_admin_user(user):
+        sede = user_sede(user)
+        if not sede:
+            raise HTTPException(status_code=403, detail="Usuario sin sede asignada")
+        sede_sql = " AND norm_text(COALESCE(NULLIF(u.sede, ''), per.sede, '')) = norm_text(?)"
+        params.append(sede)
     tecnico = conn.execute(
-        """
-        SELECT id FROM personal
-        WHERE lower(nombre) = lower(?) AND lower(cargo) = 'tecnico'
+        f"""
+        SELECT u.id FROM users u
+        LEFT JOIN personal per ON norm_text(COALESCE(per.nombre, '')) = norm_text(COALESCE(u.full_name, u.username, ''))
+        WHERE u.active = 1
+          AND lower(COALESCE(NULLIF(u.full_name, ''), u.username)) = lower(?)
+          AND (lower(COALESCE(u.role, '')) = 'tecnico'
+               OR lower(COALESCE(u.cargo, per.cargo, '')) = 'tecnico'
+               OR lower(COALESCE(u.cargo, per.cargo, '')) LIKE '%mantenimiento%')
+          {sede_sql}
         LIMIT 1
         """,
-        (nombre,),
+        params,
     ).fetchone()
     if not tecnico:
-        raise HTTPException(status_code=400, detail="El tecnico debe existir en DB PERSONAL con CARGO = Tecnico")
+        raise HTTPException(status_code=400, detail="El tecnico debe existir activo en DB USUARIOS con ROL/CARGO = Tecnico")
 
 
-def crear_ot_tx(conn, data: OTIn, username: str, origen: str, aviso_numero: str):
-    validar_tecnico_conn(conn, data.tecnico_1)
+def crear_ot_tx(conn, data: OTIn, user, origen: str, aviso_numero: str):
+    username = user["username"]
+    validar_tecnico_conn(conn, data.tecnico_1, user)
+    sede_final = data.sede if is_admin_user(user) and data.sede else effective_sede_scope(user) or data.sede
+    if not sede_final:
+        raise HTTPException(status_code=400, detail="Usuario sin sede asignada")
     numero = next_number(conn, "ots", "OT")
     conn.execute(
         """
@@ -510,7 +798,7 @@ def crear_ot_tx(conn, data: OTIn, username: str, origen: str, aviso_numero: str)
             data.tipo_servicio,
             data.modo_equipo,
             data.equipo_codigo,
-            data.sede,
+            sede_final,
             data.ubicacion,
             data.proceso,
             data.sistema,
@@ -536,7 +824,7 @@ def crear_ot_tx(conn, data: OTIn, username: str, origen: str, aviso_numero: str)
     return numero
 
 
-def buscar_ots(desde="", hasta="", estado="", tecnico="", sede="", equipo="", numeros="", codigo="", prioridad="", tipo_mantenimiento=""):
+def buscar_ots(desde="", hasta="", estado="", tecnico="", sede="", equipo="", numeros="", codigo="", prioridad="", tipo_mantenimiento="", user=None):
     sql = "SELECT * FROM ots WHERE 1 = 1"
     params = []
     if numeros:
@@ -556,8 +844,15 @@ def buscar_ots(desde="", hasta="", estado="", tecnico="", sede="", equipo="", nu
     if tecnico:
         sql += " AND (tecnico_1 LIKE ? OR tecnico_2 LIKE ?)"
         params.extend([f"%{tecnico}%", f"%{tecnico}%"])
-    if sede:
-        sql += " AND sede = ?"
+    if user is not None and (not is_admin_user(user) or user.get("_sede_scope")):
+        user_scope = effective_sede_scope(user)
+        if not user_scope:
+            sql += " AND 1 = 0"
+        else:
+            sql += " AND norm_text(COALESCE(sede, '')) = norm_text(?)"
+            params.append(user_scope)
+    elif sede:
+        sql += " AND norm_text(COALESCE(sede, '')) = norm_text(?)"
         params.append(sede)
     if equipo:
         sql += " AND equipo LIKE ?"
@@ -645,6 +940,7 @@ def dashboard_counts():
 
 
 INVENTORY_ALIASES = {
+    "sede": ["sede", "planta", "local", "centro", "sucursal"],
     "codigo": ["codigo", "código", "cod", "cod_item", "codigo_item", "item", "sku"],
     "tipo": ["tipo", "clase"],
     "categoria": ["categoria", "categoría", "familia", "grupo", "subfamilia"],
@@ -683,6 +979,7 @@ def importar_inventario_tx(tabla, registros):
                 continue
             data = {
                 "codigo": codigo,
+                "sede": canonical_sede(str(mtto_pick(record, "sede")).strip()),
                 "tipo": str(mtto_pick(record, "tipo")).strip(),
                 "categoria": str(mtto_pick(record, "categoria")).strip(),
                 "area": str(mtto_pick(record, "area")).strip(),
@@ -695,20 +992,23 @@ def importar_inventario_tx(tabla, registros):
                 "stock_minimo": mtto_float(mtto_pick(record, "stock_minimo"), 0),
                 "stock_maximo": mtto_float(mtto_pick(record, "stock_maximo"), 0),
             }
-            exists = conn.execute(f"SELECT id FROM {tabla} WHERE codigo = ?", (codigo,)).fetchone()
+            exists = conn.execute(
+                f"SELECT id FROM {tabla} WHERE codigo = ? AND norm_text(COALESCE(sede, '')) = norm_text(?)",
+                (codigo, data["sede"]),
+            ).fetchone()
             if exists:
                 conn.execute(
                     f"""
                     UPDATE {tabla}
-                    SET tipo=?, categoria=?, area=?, descripcion=?, modelo=?, cantidad=?, ubicacion=?, proveedor=?, unidad=?,
+                    SET sede=?, tipo=?, categoria=?, area=?, descripcion=?, modelo=?, cantidad=?, ubicacion=?, proveedor=?, unidad=?,
                         stock_minimo=CASE WHEN ? > 0 THEN ? ELSE stock_minimo END,
                         stock_maximo=CASE WHEN ? > 0 THEN ? ELSE stock_maximo END
-                    WHERE codigo=?
+                    WHERE id=?
                     """,
                     (
-                        data["tipo"], data["categoria"], data["area"], data["descripcion"], data["modelo"],
+                        data["sede"], data["tipo"], data["categoria"], data["area"], data["descripcion"], data["modelo"],
                         data["cantidad"], data["ubicacion"], data["proveedor"], data["unidad"],
-                        data["stock_minimo"], data["stock_minimo"], data["stock_maximo"], data["stock_maximo"], codigo,
+                        data["stock_minimo"], data["stock_minimo"], data["stock_maximo"], data["stock_maximo"], exists["id"],
                     ),
                 )
                 stats["actualizados"] += 1
@@ -716,11 +1016,11 @@ def importar_inventario_tx(tabla, registros):
                 conn.execute(
                     f"""
                     INSERT INTO {tabla}
-                    (codigo, tipo, categoria, area, descripcion, modelo, cantidad, ubicacion, proveedor, unidad, stock_minimo, stock_maximo)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (codigo, sede, tipo, categoria, area, descripcion, modelo, cantidad, ubicacion, proveedor, unidad, stock_minimo, stock_maximo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        data["codigo"], data["tipo"], data["categoria"], data["area"], data["descripcion"], data["modelo"],
+                        data["codigo"], data["sede"], data["tipo"], data["categoria"], data["area"], data["descripcion"], data["modelo"],
                         data["cantidad"], data["ubicacion"], data["proveedor"], data["unidad"], data["stock_minimo"], data["stock_maximo"],
                     ),
                 )
@@ -735,22 +1035,24 @@ def importar_usuarios_tx(registros, username_admin):
     with connect() as conn:
         for record in registros:
             clean = {normalizar_columna(k): v for k, v in record.items()}
+            full_name = str(clean.get("nombre") or clean.get("full_name") or clean.get("usuario") or clean.get("username") or "").strip()
             username = str(clean.get("usuario") or clean.get("username") or clean.get("dni_codigo") or clean.get("codigo") or "").strip()
+            if not username and full_name:
+                username = mtto_norm(full_name).replace("_", ".")
             if not username:
                 stats["errores"] += 1
                 continue
-            full_name = str(clean.get("nombre") or clean.get("full_name") or username).strip()
+            if not full_name:
+                full_name = username
             apellidos = str(clean.get("apellidos") or "").strip()
             dni_codigo = str(clean.get("dni_codigo") or clean.get("dni") or clean.get("codigo") or "").strip()
+            sede = canonical_sede(str(clean.get("sede") or clean.get("planta") or clean.get("local") or "").strip())
             area = str(clean.get("area") or "").strip()
             cargo = str(clean.get("cargo") or "").strip()
             role = str(clean.get("rol") or clean.get("role") or "tecnico").strip().lower()
-            role_map = {
-                "administrador": "admin", "jefe de area": "jefe", "jefe": "jefe",
-                "mantenimiento": "tecnico", "tecnico": "tecnico", "técnico": "tecnico",
-                "supervisor": "supervisor", "solicitante": "tecnico", "almacen": "almacen", "almacén": "almacen",
-            }
-            role = role_map.get(role, role if role in {"admin", "supervisor", "jefe", "tecnico", "almacen"} else "tecnico")
+            if cargo and str(clean.get("rol") or clean.get("role") or "").strip() == "":
+                role = cargo.strip().lower()
+            role = normalize_role(role)
             active_text = str(clean.get("estado") or "activo").strip().lower()
             active = 0 if active_text in {"0", "inactivo", "no", "false"} else 1
             exists = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
@@ -758,10 +1060,10 @@ def importar_usuarios_tx(registros, username_admin):
                 conn.execute(
                     """
                     UPDATE users
-                    SET full_name=?, apellidos=?, dni_codigo=?, area=?, cargo=?, role=?, active=?
+                    SET full_name=?, apellidos=?, dni_codigo=?, sede=?, area=?, cargo=?, role=?, active=?
                     WHERE username=?
                     """,
-                    (full_name, apellidos, dni_codigo, area, cargo, role, active, username),
+                    (full_name, apellidos, dni_codigo, sede, area, cargo, role, active, username),
                 )
                 stats["actualizados"] += 1
             else:
@@ -770,10 +1072,10 @@ def importar_usuarios_tx(registros, username_admin):
                 conn.execute(
                     """
                     INSERT INTO users
-                    (username, full_name, apellidos, dni_codigo, area, cargo, role, salt, password_hash, active, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (username, full_name, apellidos, dni_codigo, sede, area, cargo, role, salt, password_hash, active, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (username, full_name, apellidos, dni_codigo, area, cargo, role, salt, password_hash, active, now_iso()),
+                    (username, full_name, apellidos, dni_codigo, sede, area, cargo, role, salt, password_hash, active, now_iso()),
                 )
                 stats["nuevos"] += 1
             stats["importados"] += 1
@@ -799,7 +1101,59 @@ def dashboard_publico():
 
 @app.get("/api/dashboard")
 def dashboard(user=Depends(current_user)):
-    return dashboard_counts()
+    if is_admin_user(user) and not user.get("_sede_scope"):
+        return dashboard_counts()
+    sede = effective_sede_scope(user)
+    with connect() as conn:
+        params = [sede]
+        active_ot_filter = "UPPER(COALESCE(estado, '')) NOT IN ('CANCELADA', 'CANCELADO', 'ELIMINADA', 'ELIMINADO')"
+        total_ots = conn.execute(f"SELECT COUNT(*) AS c FROM ots WHERE {active_ot_filter} AND norm_text(COALESCE(sede, '')) = norm_text(?)", params).fetchone()["c"]
+        ots_abiertas = conn.execute("""
+            SELECT COUNT(*) AS c FROM ots
+            WHERE UPPER(COALESCE(estado, '')) IN ('ABIERTA', 'ASIGNADA', 'PENDIENTE', 'CREADA', 'EN EJECUCION', 'EN PROCESO')
+              AND norm_text(COALESCE(sede, '')) = norm_text(?)
+        """, params).fetchone()["c"]
+        ots_cerradas = conn.execute("""
+            SELECT COUNT(*) AS c FROM ots
+            WHERE UPPER(COALESCE(estado, '')) IN ('TERMINADA', 'CERRADA', 'CALIFICADA')
+              AND norm_text(COALESCE(sede, '')) = norm_text(?)
+        """, params).fetchone()["c"]
+        por_calificar = conn.execute("""
+            SELECT COUNT(*) AS c
+            FROM ots o
+            LEFT JOIN ot_calificaciones c ON c.ot_numero = o.numero
+            WHERE UPPER(COALESCE(o.estado, '')) IN ('TERMINADA', 'CERRADA') AND c.id IS NULL
+              AND norm_text(COALESCE(o.sede, '')) = norm_text(?)
+        """, params).fetchone()["c"]
+        avisos_pendientes = conn.execute("""
+            SELECT COUNT(*) AS c FROM avisos
+            WHERE UPPER(COALESCE(estado, '')) IN ('ABIERTO', 'ABIERTA', 'PENDIENTE', 'CREADO', 'CREADA')
+              AND norm_text(COALESCE(sede, '')) = norm_text(?)
+        """, params).fetchone()["c"]
+        equipos = conn.execute("SELECT COUNT(*) AS c FROM equipos WHERE norm_text(COALESCE(sede, '')) = norm_text(?)", params).fetchone()["c"]
+        stock_bajo = 0
+        for table in ("productos", "repuestos"):
+            stock_bajo += conn.execute(f"""
+                SELECT COUNT(*) AS c FROM {table}
+                WHERE COALESCE(stock_minimo, 0) > 0 AND COALESCE(cantidad, 0) <= COALESCE(stock_minimo, 0)
+                  AND norm_text(COALESCE(sede, '')) = norm_text(?)
+            """, params).fetchone()["c"]
+        return {
+            "total_ots": total_ots,
+            "ots_abiertas": ots_abiertas,
+            "ots_cerradas": ots_cerradas,
+            "por_calificar": por_calificar,
+            "calificadas": 0,
+            "avisos_pendientes": avisos_pendientes,
+            "items_pendientes": 0,
+            "equipos": equipos,
+            "stock_bajo": stock_bajo,
+            "ultimas_ots": [],
+            "ultimos_avisos": [],
+            "actividad": [],
+            "por_estado": [],
+            "por_area": [],
+        }
 
 
 @app.post("/api/login")
@@ -811,35 +1165,57 @@ def login(data: LoginIn):
         if not verify_password(data.password, row["salt"], row["password_hash"]):
             raise HTTPException(status_code=401, detail="Usuario o clave incorrectos")
         token, expires_at = create_session(conn, row["username"])
-        personal = conn.execute(
-            """
-            SELECT cargo FROM personal
-            WHERE lower(nombre) = lower(COALESCE(?, ?)) OR lower(nombre) = lower(?)
-            LIMIT 1
-            """,
-            (row["full_name"], row["username"], row["username"]),
-        ).fetchone()
+        enriched = enrich_user_context_conn(conn, dict(row))
         return {
             "token": token,
             "expires_at": expires_at,
-            "user": {
-                "username": row["username"],
-                "full_name": row["full_name"],
-                "role": row["role"],
-                "cargo": row["cargo"] or (personal["cargo"] if personal else None),
-            },
+            "user": public_user_context(enriched),
         }
 
 
 @app.get("/api/me")
 def me(user=Depends(current_user)):
-    return user
+    return public_user_context(user)
+
+
+@app.get("/api/sedes")
+def listar_sedes(user=Depends(current_user)):
+    with connect() as conn:
+        sedes = distinct_sedes_conn(conn)
+    current = effective_sede_scope(user) or user_sede(user)
+    if not is_admin_user(user):
+        sedes = [current] if current else []
+    return {"sedes": sedes, "current": current, "is_admin": is_admin_user(user)}
 
 
 @app.get("/api/catalogos/{tabla}")
 def catalogo(tabla: str, user=Depends(current_user)):
     validar_tabla(tabla, {"equipos", "personal", "productos", "repuestos"})
-    return rows(tabla)
+    if tabla == "personal":
+        sql = """
+            SELECT u.id, username, COALESCE(NULLIF(full_name, ''), username) AS nombre,
+                   full_name, dni_codigo AS codigo,
+                   COALESCE(NULLIF(u.sede, ''), per.sede, '') AS sede,
+                   COALESCE(NULLIF(u.area, ''), per.area, '') AS area,
+                   COALESCE(NULLIF(u.cargo, ''), per.cargo, '') AS cargo,
+                   role, active
+            FROM users u
+            LEFT JOIN personal per ON norm_text(COALESCE(per.nombre, '')) = norm_text(COALESCE(u.full_name, u.username, ''))
+            WHERE u.active = 1
+        """
+        params = []
+        extra, extra_params = sede_scope_sql_expr(user, "NULLIF(u.sede, ''), per.sede")
+        sql += extra + " ORDER BY full_name, username"
+        params.extend(extra_params)
+        with connect() as conn:
+            return [dict(r) for r in conn.execute(sql, params)]
+    sql = f"SELECT * FROM {tabla} WHERE 1 = 1"
+    params = []
+    scope_sql, scope_params = sede_scope_sql(user, inventory=tabla in {"productos", "repuestos"})
+    sql += scope_sql
+    params.extend(scope_params)
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(sql, params)]
 
 
 @app.post("/api/catalogos/personal")
@@ -965,7 +1341,12 @@ async def guardar_imagenes_aviso(numero, archivos):
 @app.get("/api/avisos")
 def listar_avisos(user=Depends(current_user)):
     with connect() as conn:
-        return [aviso_public_dict(r) for r in conn.execute("SELECT * FROM avisos ORDER BY id DESC")]
+        sql = "SELECT * FROM avisos WHERE 1 = 1"
+        params = []
+        extra, extra_params = sede_scope_sql(user)
+        sql += extra + " ORDER BY id DESC"
+        params.extend(extra_params)
+        return [aviso_public_dict(r) for r in conn.execute(sql, params)]
 
 
 @app.post("/api/avisos")
@@ -990,6 +1371,9 @@ async def crear_aviso(
     user=Depends(require_jefe),
 ):
     with connect() as conn:
+        sede_final = sede if is_admin_user(user) and sede else effective_sede_scope(user) or sede
+        if not sede_final:
+            raise HTTPException(status_code=400, detail="Usuario sin sede asignada")
         numero = next_number(conn, "avisos", "AV")
         imagenes_guardadas = await guardar_imagenes_aviso(numero, imagenes)
         conn.execute(
@@ -1001,7 +1385,7 @@ async def crear_aviso(
             VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ABIERTO', ?, ?, ?)
             """,
             (
-                numero, user["username"], rubro, sede, ubicacion, proceso,
+                numero, user["username"], rubro, sede_final, ubicacion, proceso,
                 sistema, equipo, sub_equipo, tipo_equipo, equipo_codigo,
                 creado or user["username"], descripcion, prioridad, tipo_falla,
                 tipo_aviso, tipo_servicio or "interno", now_iso(), componente,
@@ -1021,7 +1405,10 @@ def atender_aviso(numero: str, data: OTIn, user=Depends(current_user)):
         aviso = conn.execute("SELECT * FROM avisos WHERE numero = ?", (numero,)).fetchone()
         if not aviso:
             raise HTTPException(status_code=404, detail="Aviso no encontrado")
-        ot_numero = crear_ot_tx(conn, data, user["username"], "aviso", numero)
+        assert_row_sede(aviso, user, "Aviso")
+        if not is_admin_user(user):
+            data.sede = user_sede(user)
+        ot_numero = crear_ot_tx(conn, data, user, "aviso", numero)
         conn.execute("UPDATE avisos SET estado = 'CERRADO', ot_generada = ? WHERE numero = ?", (ot_numero, numero))
         registrar_historial(conn, user["username"], "CONVIRTIO AVISO EN OT", "avisos", numero, numero, ot_numero)
         return {"ot_numero": ot_numero}
@@ -1029,8 +1416,9 @@ def atender_aviso(numero: str, data: OTIn, user=Depends(current_user)):
 
 @app.post("/api/avisos/{numero}/atencion")
 def registrar_atencion_aviso(numero: str, data: AvisoAtencionIn, user=Depends(current_user)):
+    sede_final = user_sede(user) if not is_admin_user(user) else canonical_sede(data.sede)
     required = {
-        "sede": data.sede, "ubicacion": data.ubicacion, "proceso": data.proceso,
+        "sede": sede_final, "ubicacion": data.ubicacion, "proceso": data.proceso,
         "sistema": data.sistema, "equipo": data.equipo,
         "descripcion_falla": data.descripcion_falla, "trabajo_realizado": data.trabajo_realizado,
     }
@@ -1041,6 +1429,7 @@ def registrar_atencion_aviso(numero: str, data: AvisoAtencionIn, user=Depends(cu
         aviso = conn.execute("SELECT * FROM avisos WHERE numero = ?", (numero,)).fetchone()
         if not aviso:
             raise HTTPException(status_code=404, detail="Aviso no encontrado")
+        assert_row_sede(aviso, user, "Aviso")
         estado = (data.estado or "ATENDIDO").upper()
         conn.execute(
             """
@@ -1053,7 +1442,7 @@ def registrar_atencion_aviso(numero: str, data: AvisoAtencionIn, user=Depends(cu
             """,
             (
                 numero, data.tecnico, data.fecha_atencion, data.hora_inicio, data.hora_fin,
-                data.sede, data.ubicacion, data.proceso, data.sistema, data.equipo,
+                sede_final, data.ubicacion, data.proceso, data.sistema, data.equipo,
                 data.equipo_codigo or "", data.tipo_equipo or "", data.sub_equipo or "", data.componente or "",
                 data.tipo_falla or "", data.tipo_intervencion or "", data.descripcion_falla,
                 data.trabajo_realizado, data.observacion or "",
@@ -1069,7 +1458,7 @@ def registrar_atencion_aviso(numero: str, data: AvisoAtencionIn, user=Depends(cu
             WHERE numero=?
             """,
             (
-                estado, data.sede, data.ubicacion, data.proceso, data.sistema, data.equipo,
+                estado, sede_final, data.ubicacion, data.proceso, data.sistema, data.equipo,
                 data.equipo_codigo or "", data.tipo_equipo or "", data.sub_equipo or "", data.componente or "",
                 data.tipo_falla or "", data.tipo_intervencion or "",
                 data.descripcion_falla, data.trabajo_realizado, data.observacion or "", numero,
@@ -1085,6 +1474,7 @@ def eliminar_aviso(numero: str, user=Depends(require_jefe)):
         aviso = conn.execute("SELECT * FROM avisos WHERE numero = ?", (numero,)).fetchone()
         if not aviso:
             raise HTTPException(status_code=404, detail="Aviso no encontrado")
+        assert_row_sede(aviso, user, "Aviso")
         conn.execute("UPDATE avisos SET estado = 'CANCELADO' WHERE numero = ?", (numero,))
         registrar_historial(conn, user["username"], "ELIMINO AVISO", "avisos", numero, aviso["estado"] or "", "CANCELADO")
         return {"ok": True}
@@ -1093,20 +1483,23 @@ def eliminar_aviso(numero: str, user=Depends(require_jefe)):
 @app.get("/api/ots")
 def listar_ots(user=Depends(current_user)):
     with connect() as conn:
+        extra, params = sede_scope_sql(user, alias="o")
         return [dict(r) for r in conn.execute(
-            """
+            f"""
             SELECT o.*, c.calificacion, c.promedio, c.comentario AS calificacion_comentario
             FROM ots o
             LEFT JOIN ot_calificaciones c ON c.ot_numero = o.numero
+            WHERE 1 = 1 {extra}
             ORDER BY o.id DESC
-            """
+            """,
+            params,
         )]
 
 
 @app.post("/api/ots")
 def crear_ot(data: OTIn, user=Depends(current_user)):
     with connect() as conn:
-        numero = crear_ot_tx(conn, data, user["username"], data.origen or "manual", data.aviso_numero or "")
+        numero = crear_ot_tx(conn, data, user, data.origen or "manual", data.aviso_numero or "")
         return {"numero": numero}
 
 
@@ -1116,6 +1509,7 @@ def eliminar_ot(numero: str, user=Depends(require_jefe)):
         ot = conn.execute("SELECT * FROM ots WHERE numero = ?", (numero,)).fetchone()
         if not ot:
             raise HTTPException(status_code=404, detail="OT no encontrada")
+        assert_row_sede(ot, user, "OT")
         conn.execute("UPDATE ots SET estado = 'CANCELADA' WHERE numero = ?", (numero,))
         registrar_evento(conn, numero, "ELIMINACION LOGICA", "CANCELADA", user["username"], ot["tecnico_1"], "OT cancelada")
         registrar_historial(conn, user["username"], "ELIMINO OT", "ots", numero, ot["estado"] or "", "CANCELADA")
@@ -1128,7 +1522,11 @@ def atender_ot(numero: str, data: OTAtenderIn, user=Depends(require_tecnico)):
         raise HTTPException(status_code=400, detail="Estado final no permitido")
     estado_final = "TERMINADA" if data.estado_final == "ATENDIDA" else data.estado_final
     with connect() as conn:
-        validar_tecnico_conn(conn, data.tecnico)
+        ot = conn.execute("SELECT * FROM ots WHERE numero = ?", (numero,)).fetchone()
+        if not ot:
+            raise HTTPException(status_code=404, detail="OT no encontrada")
+        assert_row_sede(ot, user, "OT")
+        validar_tecnico_conn(conn, data.tecnico, user)
         cierre_en = now_iso()
         cur = conn.execute(
             """
@@ -1154,6 +1552,7 @@ def cerrar_ot(numero: str, data: Optional[OTCerrarIn] = None, user=Depends(curre
         ot = conn.execute("SELECT * FROM ots WHERE numero = ?", (numero,)).fetchone()
         if not ot:
             raise HTTPException(status_code=404, detail="OT no encontrada")
+        assert_row_sede(ot, user, "OT")
         estado_actual = str(ot["estado"] or "").upper()
         if estado_actual in {"CERRADA", "TERMINADA", "CALIFICADA", "CANCELADA"}:
             raise HTTPException(status_code=400, detail="La OT ya no esta pendiente de cierre")
@@ -1173,6 +1572,9 @@ def cerrar_ot(numero: str, data: Optional[OTCerrarIn] = None, user=Depends(curre
 @app.get("/api/ots/{numero}/calificacion")
 def obtener_calificacion(numero: str, user=Depends(current_user)):
     with connect() as conn:
+        ot = conn.execute("SELECT * FROM ots WHERE numero = ?", (numero,)).fetchone()
+        if ot:
+            assert_row_sede(ot, user, "OT")
         row = conn.execute("SELECT * FROM ot_calificaciones WHERE ot_numero = ?", (numero,)).fetchone()
         return dict(row) if row else {"calificada": False}
 
@@ -1183,6 +1585,7 @@ def eliminar_calificacion_ot(numero: str, user=Depends(require_jefe)):
         ot = conn.execute("SELECT * FROM ots WHERE numero = ?", (numero,)).fetchone()
         if not ot:
             raise HTTPException(status_code=404, detail="OT no encontrada")
+        assert_row_sede(ot, user, "OT")
         calificacion = conn.execute("SELECT * FROM ot_calificaciones WHERE ot_numero = ?", (numero,)).fetchone()
         if not calificacion:
             raise HTTPException(status_code=404, detail="Calificacion no encontrada")
@@ -1203,6 +1606,9 @@ def listar_calificaciones(desde: Optional[str] = "", hasta: Optional[str] = "", 
         WHERE 1 = 1
     """
     params = []
+    scope_sql, scope_params = sede_scope_sql(user, alias="o")
+    sql += scope_sql
+    params.extend(scope_params)
     if desde:
         sql += " AND substr(c.fecha, 1, 10) >= ?"
         params.append(desde)
@@ -1248,6 +1654,9 @@ def exportar_calificaciones_excel(
         WHERE 1 = 1
     """
     params = []
+    scope_sql, scope_params = sede_scope_sql(user, alias="o")
+    sql += scope_sql
+    params.extend(scope_params)
     if desde:
         sql += " AND substr(c.fecha, 1, 10) >= ?"
         params.append(desde)
@@ -1292,6 +1701,7 @@ def calificar_ot(numero: str, data: CalificacionIn, user=Depends(require_jefe)):
         ot = conn.execute("SELECT * FROM ots WHERE numero = ?", (numero,)).fetchone()
         if not ot:
             raise HTTPException(status_code=404, detail="OT no encontrada")
+        assert_row_sede(ot, user, "OT")
         if ot["estado"] != "CERRADA":
             raise HTTPException(status_code=400, detail="Solo se califican OT cerradas")
         exists = conn.execute("SELECT id FROM ot_calificaciones WHERE ot_numero = ?", (numero,)).fetchone()
@@ -1315,15 +1725,21 @@ def calificar_ot(numero: str, data: CalificacionIn, user=Depends(require_jefe)):
 @app.get("/api/peticiones")
 def listar_peticiones(user=Depends(current_user)):
     with connect() as conn:
+        scope, params = peticion_sede_scope_sql(user, "u")
         return [
             dict(r)
             for r in conn.execute(
-                """
-                SELECT *
-                FROM peticiones
-                WHERE UPPER(COALESCE(estado, '')) IN ('PENDIENTE', 'PENDIENTES')
-                ORDER BY id DESC
-                """
+                f"""
+                SELECT p.*, COALESCE(NULLIF(p.sede, ''), u.sede, per.sede, '') AS sede,
+                       COALESCE(u.area, per.area, '') AS area
+                FROM peticiones p
+                LEFT JOIN users u ON u.username = p.usuario
+                LEFT JOIN personal per ON norm_text(COALESCE(per.nombre, '')) = norm_text(COALESCE(u.full_name, p.usuario, ''))
+                WHERE UPPER(COALESCE(p.estado, '')) IN ('PENDIENTE', 'PENDIENTES')
+                  {scope}
+                ORDER BY p.id DESC
+                """,
+                params,
             )
         ]
 
@@ -1332,13 +1748,16 @@ def listar_peticiones(user=Depends(current_user)):
 def crear_peticion(data: PeticionIn, user=Depends(current_user)):
     with connect() as conn:
         numero = next_number(conn, "peticiones", "PI")
+        sede = effective_sede_scope(user)
+        if not sede:
+            raise HTTPException(status_code=400, detail="Usuario sin sede asignada")
         conn.execute(
             """
             INSERT INTO peticiones
-            (numero, usuario, ot_numero, item_codigo, item_nombre, cantidad, unidad, motivo, criticidad, estado, creado_en)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?)
+            (numero, usuario, sede, ot_numero, item_codigo, item_nombre, cantidad, unidad, motivo, criticidad, estado, creado_en)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?)
             """,
-            (numero, user["username"], data.ot_numero, data.item_codigo, data.item_nombre, data.cantidad, data.unidad, data.motivo, data.criticidad or "", now_iso()),
+            (numero, user["username"], sede, data.ot_numero, data.item_codigo, data.item_nombre, data.cantidad, data.unidad, data.motivo, data.criticidad or "", now_iso()),
         )
         conn.execute(
             """
@@ -1362,13 +1781,16 @@ def crear_peticion_carrito(data: PeticionCartIn, user=Depends(current_user)):
     with connect() as conn:
         numero = next_number(conn, "peticiones", "PI")
         first = data.items[0]
+        sede = effective_sede_scope(user)
+        if not sede:
+            raise HTTPException(status_code=400, detail="Usuario sin sede asignada")
         conn.execute(
             """
             INSERT INTO peticiones
-            (numero, usuario, ot_numero, item_codigo, item_nombre, cantidad, unidad, motivo, criticidad, estado, creado_en)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?)
+            (numero, usuario, sede, ot_numero, item_codigo, item_nombre, cantidad, unidad, motivo, criticidad, estado, creado_en)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?)
             """,
-            (numero, user["username"], data.ot_numero or "", first.codigo, first.descripcion, total, first.unidad or "", data.motivo or "", data.criticidad or "", now_iso()),
+            (numero, user["username"], sede, data.ot_numero or "", first.codigo, first.descripcion, total, first.unidad or "", data.motivo or "", data.criticidad or "", now_iso()),
         )
         for item in data.items:
             if item.cantidad <= 0:
@@ -1388,14 +1810,20 @@ def crear_peticion_carrito(data: PeticionCartIn, user=Depends(current_user)):
 @app.get("/api/peticiones-historial")
 def listar_peticiones_historial(user=Depends(current_user)):
     with connect() as conn:
+        scope, params = peticion_sede_scope_sql(user, "u")
         return [dict(r) for r in conn.execute(
-            """
-            SELECT p.*, COALESCE(COUNT(d.id), 0) AS items_count
+            f"""
+            SELECT p.*, COALESCE(NULLIF(p.sede, ''), u.sede, per.sede, '') AS sede,
+                   COALESCE(u.area, per.area, '') AS area, COALESCE(COUNT(d.id), 0) AS items_count
             FROM peticiones p
+            LEFT JOIN users u ON u.username = p.usuario
+            LEFT JOIN personal per ON norm_text(COALESCE(per.nombre, '')) = norm_text(COALESCE(u.full_name, p.usuario, ''))
             LEFT JOIN peticiones_detalle d ON d.peticion_numero = p.numero
+            WHERE 1 = 1 {scope}
             GROUP BY p.id
             ORDER BY p.id DESC
-            """
+            """,
+            params,
         )]
 
 
@@ -1405,6 +1833,7 @@ def eliminar_peticion(numero: str, user=Depends(require_jefe)):
         peticion = conn.execute("SELECT * FROM peticiones WHERE numero = ?", (numero,)).fetchone()
         if not peticion:
             raise HTTPException(status_code=404, detail="Peticion no encontrada")
+        assert_peticion_scope(conn, numero, user)
         conn.execute("DELETE FROM peticiones_detalle WHERE peticion_numero = ?", (numero,))
         conn.execute("DELETE FROM peticiones WHERE numero = ?", (numero,))
         registrar_historial(
@@ -1425,6 +1854,7 @@ def detalle_peticion(numero: str, user=Depends(current_user)):
         peticion = conn.execute("SELECT * FROM peticiones WHERE numero = ?", (numero,)).fetchone()
         if not peticion:
             raise HTTPException(status_code=404, detail="Peticion no encontrada")
+        assert_peticion_scope(conn, numero, user)
         items = [dict(r) for r in conn.execute("SELECT * FROM peticiones_detalle WHERE peticion_numero = ?", (numero,))]
         if not items:
             items = [dict(peticion)]
@@ -1439,6 +1869,7 @@ def aceptar_peticion(numero: str, user=Depends(require_jefe)):
         peticion = conn.execute("SELECT * FROM peticiones WHERE numero = ?", (numero,)).fetchone()
         if not peticion:
             raise HTTPException(status_code=404, detail="Peticion no encontrada")
+        assert_peticion_scope(conn, numero, user)
         if str(peticion["estado"] or "").upper() != "PENDIENTE":
             raise HTTPException(status_code=400, detail="Solo se aceptan peticiones pendientes")
         conn.execute("UPDATE peticiones SET estado = 'ACEPTADA' WHERE numero = ?", (numero,))
@@ -1452,6 +1883,7 @@ def marcar_salida_peticion(numero: str, user=Depends(require_jefe)):
         peticion = conn.execute("SELECT * FROM peticiones WHERE numero = ?", (numero,)).fetchone()
         if not peticion:
             raise HTTPException(status_code=404, detail="Peticion no encontrada")
+        assert_peticion_scope(conn, numero, user)
         if str(peticion["estado"] or "").upper() != "ACEPTADA":
             raise HTTPException(status_code=400, detail="Solo una peticion ACEPTADA puede marcar salida")
         items = [dict(r) for r in conn.execute("SELECT * FROM peticiones_detalle WHERE peticion_numero = ?", (numero,))]
@@ -1459,10 +1891,16 @@ def marcar_salida_peticion(numero: str, user=Depends(require_jefe)):
             items = [{"tabla": "repuestos", "item_id": None, "item_codigo": peticion["item_codigo"], "item_nombre": peticion["item_nombre"], "cantidad": peticion["cantidad"], "unidad": peticion["unidad"]}]
         for item in items:
             tabla = item.get("tabla") if item.get("tabla") in {"productos", "repuestos"} else "repuestos"
-            inv = conn.execute(f"SELECT * FROM {tabla} WHERE codigo = ?", (item["item_codigo"],)).fetchone()
+            inv = conn.execute(
+                f"SELECT * FROM {tabla} WHERE codigo = ? AND (? = '' OR norm_text(COALESCE(sede, '')) = norm_text(?))",
+                (item["item_codigo"], peticion["sede"] or "", peticion["sede"] or ""),
+            ).fetchone()
             if not inv:
                 alt = "productos" if tabla == "repuestos" else "repuestos"
-                inv = conn.execute(f"SELECT * FROM {alt} WHERE codigo = ?", (item["item_codigo"],)).fetchone()
+                inv = conn.execute(
+                    f"SELECT * FROM {alt} WHERE codigo = ? AND (? = '' OR norm_text(COALESCE(sede, '')) = norm_text(?))",
+                    (item["item_codigo"], peticion["sede"] or "", peticion["sede"] or ""),
+                ).fetchone()
                 if inv:
                     tabla = alt
             if not inv:
@@ -1475,10 +1913,16 @@ def marcar_salida_peticion(numero: str, user=Depends(require_jefe)):
                 raise HTTPException(status_code=400, detail=f"STOCK INSUFICIENTE {item['item_codigo']}. Disponible: {stock}. Solicitado: {qty}")
         for item in items:
             tabla = item.get("tabla") if item.get("tabla") in {"productos", "repuestos"} else "repuestos"
-            inv = conn.execute(f"SELECT * FROM {tabla} WHERE codigo = ?", (item["item_codigo"],)).fetchone()
+            inv = conn.execute(
+                f"SELECT * FROM {tabla} WHERE codigo = ? AND (? = '' OR norm_text(COALESCE(sede, '')) = norm_text(?))",
+                (item["item_codigo"], peticion["sede"] or "", peticion["sede"] or ""),
+            ).fetchone()
             if not inv:
                 alt = "productos" if tabla == "repuestos" else "repuestos"
-                inv = conn.execute(f"SELECT * FROM {alt} WHERE codigo = ?", (item["item_codigo"],)).fetchone()
+                inv = conn.execute(
+                    f"SELECT * FROM {alt} WHERE codigo = ? AND (? = '' OR norm_text(COALESCE(sede, '')) = norm_text(?))",
+                    (item["item_codigo"], peticion["sede"] or "", peticion["sede"] or ""),
+                ).fetchone()
                 tabla = alt if inv else tabla
             stock = mtto_float(inv["cantidad"], 0)
             qty = mtto_float(item["cantidad"], 0)
@@ -1487,11 +1931,11 @@ def marcar_salida_peticion(numero: str, user=Depends(require_jefe)):
             conn.execute(
                 """
                 INSERT INTO inventario_movimientos
-                (peticion_numero, tabla, item_id, item_codigo, descripcion, cantidad, unidad, usuario,
+                (peticion_numero, sede, tabla, item_id, item_codigo, descripcion, cantidad, unidad, usuario,
                  tipo_movimiento, stock_anterior, stock_posterior, creado_en)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'SALIDA', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SALIDA', ?, ?, ?)
                 """,
-                (numero, tabla, inv["id"], item["item_codigo"], item["item_nombre"], qty, item.get("unidad") or "", user["username"], stock, nuevo, now_iso()),
+                (numero, peticion["sede"] or "", tabla, inv["id"], item["item_codigo"], item["item_nombre"], qty, item.get("unidad") or "", user["username"], stock, nuevo, now_iso()),
             )
         conn.execute("UPDATE peticiones SET estado = 'SALIDA REALIZADA', atendido_por = ?, atendido_en = ? WHERE numero = ?", (user["username"], now_iso(), numero))
         registrar_historial(conn, user["username"], "SALIDA INVENTARIO", "peticiones", numero, "ACEPTADA", "SALIDA REALIZADA")
@@ -1501,15 +1945,22 @@ def marcar_salida_peticion(numero: str, user=Depends(require_jefe)):
 @app.get("/api/inventario-movimientos")
 def listar_inventario_movimientos(user=Depends(current_user)):
     with connect() as conn:
+        scope, params = movimiento_sede_scope_sql(user)
         return [
             dict(r)
             for r in conn.execute(
-                """
-                SELECT *
-                FROM inventario_movimientos
-                ORDER BY id DESC
+                f"""
+                SELECT m.*, COALESCE(NULLIF(m.sede, ''), p.sede, u.sede, per.sede, '') AS sede,
+                       COALESCE(u.area, per.area, '') AS area
+                FROM inventario_movimientos m
+                LEFT JOIN peticiones p ON p.numero = m.peticion_numero
+                LEFT JOIN users u ON u.username = COALESCE(p.usuario, m.usuario)
+                LEFT JOIN personal per ON norm_text(COALESCE(per.nombre, '')) = norm_text(COALESCE(u.full_name, p.usuario, m.usuario, ''))
+                WHERE 1 = 1 {scope}
+                ORDER BY m.id DESC
                 LIMIT 1000
-                """
+                """,
+                params,
             )
         ]
 
@@ -1521,19 +1972,27 @@ def exportar_inventario_movimientos_excel(
     user=Depends(current_user),
 ):
     sql = """
-        SELECT creado_en, peticion_numero, tabla, item_codigo, descripcion, cantidad,
-               unidad, tipo_movimiento, stock_anterior, stock_posterior, usuario
-        FROM inventario_movimientos
+        SELECT m.creado_en, m.peticion_numero, m.tabla, m.item_codigo, m.descripcion, m.cantidad,
+               m.unidad, m.tipo_movimiento, m.stock_anterior, m.stock_posterior, m.usuario,
+               COALESCE(NULLIF(m.sede, ''), p.sede, u.sede, per.sede, '') AS sede,
+               COALESCE(u.area, per.area, '') AS area
+        FROM inventario_movimientos m
+        LEFT JOIN peticiones p ON p.numero = m.peticion_numero
+        LEFT JOIN users u ON u.username = COALESCE(p.usuario, m.usuario)
+        LEFT JOIN personal per ON norm_text(COALESCE(per.nombre, '')) = norm_text(COALESCE(u.full_name, p.usuario, m.usuario, ''))
         WHERE 1 = 1
     """
     params = []
+    scope, scope_params = movimiento_sede_scope_sql(user)
+    sql += scope
+    params.extend(scope_params)
     if desde:
-        sql += " AND substr(creado_en, 1, 10) >= ?"
+        sql += " AND substr(m.creado_en, 1, 10) >= ?"
         params.append(desde)
     if hasta:
-        sql += " AND substr(creado_en, 1, 10) <= ?"
+        sql += " AND substr(m.creado_en, 1, 10) <= ?"
         params.append(hasta)
-    sql += " ORDER BY id DESC"
+    sql += " ORDER BY m.id DESC"
     with connect() as conn:
         data = [dict(r) for r in conn.execute(sql, params)]
 
@@ -1552,9 +2011,20 @@ def exportar_inventario_movimientos_excel(
 @app.delete("/api/inventario-movimientos/{movimiento_id}")
 def eliminar_inventario_movimiento(movimiento_id: int, user=Depends(require_almacen_or_jefe)):
     with connect() as conn:
-        mov = conn.execute("SELECT * FROM inventario_movimientos WHERE id = ?", (movimiento_id,)).fetchone()
+        mov = conn.execute(
+            """
+            SELECT m.*, COALESCE(NULLIF(m.sede, ''), p.sede, u.sede, per.sede, '') AS sede
+            FROM inventario_movimientos m
+            LEFT JOIN peticiones p ON p.numero = m.peticion_numero
+            LEFT JOIN users u ON u.username = COALESCE(p.usuario, m.usuario)
+            LEFT JOIN personal per ON norm_text(COALESCE(per.nombre, '')) = norm_text(COALESCE(u.full_name, p.usuario, m.usuario, ''))
+            WHERE m.id = ?
+            """,
+            (movimiento_id,),
+        ).fetchone()
         if not mov:
             raise HTTPException(status_code=404, detail="Movimiento de Kardex no encontrado")
+        assert_row_sede(mov, user, "Movimiento de Kardex")
         conn.execute("DELETE FROM inventario_movimientos WHERE id = ?", (movimiento_id,))
         registrar_historial(
             conn,
@@ -1580,7 +2050,8 @@ def exportar_inventario_excel(
     query = mtto_norm(q)
     for table in tablas:
         with connect() as conn:
-            registros = [dict(r) for r in conn.execute(f"SELECT * FROM {table} ORDER BY codigo")]
+            scope, scope_params = sede_scope_sql(user)
+            registros = [dict(r) for r in conn.execute(f"SELECT * FROM {table} WHERE 1 = 1 {scope} ORDER BY codigo", scope_params)]
         for row in registros:
             cantidad = mtto_float(row.get("cantidad"), 0)
             minimo = mtto_float(row.get("stock_minimo"), 0)
@@ -1593,15 +2064,18 @@ def exportar_inventario_excel(
             if stock == "bajo" and estado != "STOCK BAJO":
                 continue
             haystack = mtto_norm(" ".join([
+                str(row.get("sede") or ""),
                 str(row.get("codigo") or ""),
                 str(row.get("descripcion") or ""),
                 str(row.get("modelo") or ""),
                 str(row.get("ubicacion") or ""),
                 str(row.get("unidad") or ""),
+                str(row.get("categoria") or ""),
             ]))
             if query and query not in haystack:
                 continue
             data.append({
+                "SEDE": row.get("sede") or "",
                 "CODIGO": row.get("codigo") or "",
                 "DESCRIPCION": row.get("descripcion") or "",
                 "MODELO": row.get("modelo") or "",
@@ -1611,6 +2085,7 @@ def exportar_inventario_excel(
                 "MINIMO": minimo,
                 "MAXIMO": maximo,
                 "ESTADO": estado,
+                "CATEGORIA": row.get("categoria") or "",
             })
 
     buffer = BytesIO()
@@ -1638,11 +2113,23 @@ def registrar_ingreso_inventario(data: InventarioIngresoIn, user=Depends(require
     if cantidad <= 0:
         raise HTTPException(status_code=400, detail="Cantidad de ingreso invalida")
 
+    sede_scope = data.sede or effective_sede_scope(user)
+    if not is_admin_user(user):
+        sede_scope = effective_sede_scope(user)
+    if not sede_scope:
+        raise HTTPException(status_code=400, detail="Usuario sin sede asignada")
+
     with connect() as conn:
-        inv = conn.execute(f"SELECT * FROM {tabla} WHERE codigo = ?", (codigo,)).fetchone()
+        inv = conn.execute(
+            f"SELECT * FROM {tabla} WHERE codigo = ? AND norm_text(COALESCE(sede, '')) = norm_text(?)",
+            (codigo, sede_scope),
+        ).fetchone()
         if not inv:
             alt = "productos" if tabla == "repuestos" else "repuestos"
-            inv = conn.execute(f"SELECT * FROM {alt} WHERE codigo = ?", (codigo,)).fetchone()
+            inv = conn.execute(
+                f"SELECT * FROM {alt} WHERE codigo = ? AND norm_text(COALESCE(sede, '')) = norm_text(?)",
+                (codigo, sede_scope),
+            ).fetchone()
             if inv:
                 tabla = alt
 
@@ -1663,15 +2150,17 @@ def registrar_ingreso_inventario(data: InventarioIngresoIn, user=Depends(require
         else:
             stock_anterior = 0
             stock_posterior = cantidad
+            sede = sede_scope
             cur = conn.execute(
                 f"""
                 INSERT INTO {tabla}
-                (codigo, tipo, categoria, area, descripcion, modelo, cantidad, ubicacion,
+                (codigo, sede, tipo, categoria, area, descripcion, modelo, cantidad, ubicacion,
                  proveedor, unidad, stock_minimo, stock_maximo)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     codigo,
+                    sede,
                     data.tipo or "",
                     data.categoria or "",
                     data.area or "",
@@ -1691,11 +2180,11 @@ def registrar_ingreso_inventario(data: InventarioIngresoIn, user=Depends(require
         conn.execute(
             """
             INSERT INTO inventario_movimientos
-            (peticion_numero, tabla, item_id, item_codigo, descripcion, cantidad, unidad, usuario,
+            (peticion_numero, sede, tabla, item_id, item_codigo, descripcion, cantidad, unidad, usuario,
              tipo_movimiento, stock_anterior, stock_posterior, creado_en)
-            VALUES ('', ?, ?, ?, ?, ?, ?, ?, 'INGRESO', ?, ?, ?)
+            VALUES ('', ?, ?, ?, ?, ?, ?, ?, ?, 'INGRESO', ?, ?, ?)
             """,
-            (tabla, item_id, codigo, descripcion, cantidad, unidad, user["username"], stock_anterior, stock_posterior, now_iso()),
+            (sede_scope, tabla, item_id, codigo, descripcion, cantidad, unidad, user["username"], stock_anterior, stock_posterior, now_iso()),
         )
         registrar_historial(conn, user["username"], "INGRESO INVENTARIO", tabla, codigo, str(stock_anterior), f"{stock_posterior} {detalle}")
         return {"ok": True, "tabla": tabla, "codigo": codigo, "stock_actual": stock_posterior}
@@ -1704,6 +2193,7 @@ def registrar_ingreso_inventario(data: InventarioIngresoIn, user=Depends(require
 @app.post("/api/peticiones/{numero}/atender")
 def atender_item(numero: str, user=Depends(current_user)):
     with connect() as conn:
+        assert_peticion_scope(conn, numero, user)
         cur = conn.execute(
             """
             UPDATE peticiones SET estado = 'ATENDIDO', atendido_por = ?, atendido_en = ?
@@ -1773,7 +2263,7 @@ def listar_usuarios(user=Depends(require_admin)):
     with connect() as conn:
         return [dict(r) for r in conn.execute(
             """
-            SELECT id, username, full_name, apellidos, dni_codigo, area, cargo, role, active, created_at
+            SELECT id, username, full_name, apellidos, dni_codigo, sede, area, cargo, role, active, created_at
             FROM users ORDER BY username
             """
         )]
@@ -1784,19 +2274,23 @@ def crear_usuario(data: UserIn, user=Depends(require_admin)):
     username = data.username.strip()
     if not username or not data.password:
         raise HTTPException(status_code=400, detail="Usuario y clave son obligatorios")
-    validar_rol(data.role)
+    role = normalize_role(data.role)
+    validar_rol(role)
+    sede = canonical_sede(data.sede)
+    if role != "admin" and not sede:
+        raise HTTPException(status_code=400, detail="Sede obligatoria para usuarios no administradores")
     salt, password_hash = hash_password(data.password)
     try:
         with connect() as conn:
             conn.execute(
                 """
                 INSERT INTO users
-                (username, full_name, apellidos, dni_codigo, area, cargo, role, salt, password_hash, active, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (username, full_name, apellidos, dni_codigo, sede, area, cargo, role, salt, password_hash, active, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (username, data.full_name or username, data.apellidos, data.dni_codigo, data.area, data.cargo, data.role, salt, password_hash, int(data.active), now_iso()),
+                (username, data.full_name or username, data.apellidos, data.dni_codigo, sede, data.area, data.cargo, role, salt, password_hash, int(data.active), now_iso()),
             )
-            registrar_historial(conn, user["username"], "CREO USUARIO", "users", username, "", data.role)
+            registrar_historial(conn, user["username"], "CREO USUARIO", "users", username, "", role)
             return {"ok": True}
     except Exception as exc:
         if "UNIQUE" in str(exc).upper():
@@ -1813,13 +2307,16 @@ def actualizar_usuario(username: str, data: UserUpdateIn, user=Depends(require_a
         updates["apellidos"] = data.apellidos
     if data.dni_codigo is not None:
         updates["dni_codigo"] = data.dni_codigo
+    if data.sede is not None:
+        updates["sede"] = canonical_sede(data.sede)
     if data.area is not None:
         updates["area"] = data.area
     if data.cargo is not None:
         updates["cargo"] = data.cargo
     if data.role is not None:
-        validar_rol(data.role)
-        updates["role"] = data.role
+        role = normalize_role(data.role)
+        validar_rol(role)
+        updates["role"] = role
     if data.active is not None:
         updates["active"] = int(data.active)
     if data.password:
@@ -1828,6 +2325,17 @@ def actualizar_usuario(username: str, data: UserUpdateIn, user=Depends(require_a
         updates["password_hash"] = password_hash
     if not updates:
         return {"ok": True}
+    next_role = updates.get("role")
+    next_sede = updates.get("sede")
+    if next_role is not None or next_sede is not None:
+        with connect() as conn:
+            current = conn.execute("SELECT role, sede FROM users WHERE username = ?", (username,)).fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        effective_role = normalize_role(next_role if next_role is not None else current["role"])
+        effective_sede = canonical_sede(next_sede if next_sede is not None else current["sede"])
+        if effective_role != "admin" and not effective_sede:
+            raise HTTPException(status_code=400, detail="Sede obligatoria para usuarios no administradores")
     keys = list(updates.keys())
     sql = ", ".join([f"{k} = ?" for k in keys])
     with connect() as conn:
@@ -2238,7 +2746,7 @@ def vale_draw_ot(pdf, ot, x, y, w, h):
 
 @app.get("/api/ots/imprimir-pdf")
 def imprimir_ots_pdf(numeros: Optional[str] = "", desde: Optional[str] = "", hasta: Optional[str] = "", estado: Optional[str] = "", tecnico: Optional[str] = "", sede: Optional[str] = "", equipo: Optional[str] = "", codigo: Optional[str] = "", user=Depends(current_user)):
-    ots = buscar_ots(desde, hasta, estado, tecnico, sede, equipo, numeros, codigo)
+    ots = buscar_ots(desde, hasta, estado, tecnico, sede, equipo, numeros, codigo, user=user)
     if not ots:
         raise HTTPException(status_code=404, detail="No existen OT para imprimir")
     buffer = BytesIO()
@@ -2313,15 +2821,26 @@ def crear_pdf_ot(numero):
     return buffer.getvalue()
 
 
+def assert_ot_scope_by_numero(numero, user):
+    if is_admin_user(user):
+        return
+    with connect() as conn:
+        ot = conn.execute("SELECT * FROM ots WHERE numero = ?", (numero,)).fetchone()
+        if not ot:
+            raise HTTPException(status_code=404, detail="OT no encontrada")
+        assert_row_sede(ot, user, "OT")
+
+
 @app.get("/api/ots/{numero}/pdf")
 def exportar_ot_pdf(numero: str, user=Depends(current_user)):
+    assert_ot_scope_by_numero(numero, user)
     pdf = crear_pdf_ot(numero)
     return Response(content=pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{numero}.pdf"'})
 
 
 @app.get("/api/ots/exportar-pdf-masivo")
 def exportar_ot_pdf_masivo(desde: Optional[str] = "", hasta: Optional[str] = "", estado: Optional[str] = "", tecnico: Optional[str] = "", sede: Optional[str] = "", equipo: Optional[str] = "", codigo: Optional[str] = "", numeros: Optional[str] = "", user=Depends(current_user)):
-    ots = buscar_ots(desde, hasta, estado, tecnico, sede, equipo, numeros, codigo)
+    ots = buscar_ots(desde, hasta, estado, tecnico, sede, equipo, numeros, codigo, user=user)
     if not ots:
         raise HTTPException(status_code=404, detail="No existen OT en el rango seleccionado")
     buffer = BytesIO()
@@ -2335,7 +2854,7 @@ def exportar_ot_pdf_masivo(desde: Optional[str] = "", hasta: Optional[str] = "",
 
 @app.get("/api/ots/exportar-excel")
 def exportar_historial_ot_excel(desde: Optional[str] = "", hasta: Optional[str] = "", estado: Optional[str] = "", tecnico: Optional[str] = "", sede: Optional[str] = "", equipo: Optional[str] = "", codigo: Optional[str] = "", numero: Optional[str] = "", prioridad: Optional[str] = "", tipo_mantenimiento: Optional[str] = "", user=Depends(current_user)):
-    ots = buscar_ots(desde, hasta, estado, tecnico, sede, equipo, numero or "", codigo, prioridad, tipo_mantenimiento)
+    ots = buscar_ots(desde, hasta, estado, tecnico, sede, equipo, numero or "", codigo, prioridad, tipo_mantenimiento, user=user)
     columnas = [
         ("numero", "Numero OT"), ("creado_en", "Fecha"), ("hora_inicio", "Hora"), ("aviso_numero", "Aviso origen"),
         ("ubicacion", "Area"), ("equipo", "Equipo"), ("proceso", "Ubicacion"), ("tipo_falla", "Prioridad"),

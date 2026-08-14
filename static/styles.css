@@ -2056,242 +2056,6 @@ iframe[src*="warehouse3d"] {
   overflow: auto !important;
 }
 
-
-/* v70 - Aprovechar mejor el ancho disponible en todas las pantallas */
-:root {
-  --mantto-page-max: 1720px;
-  --mantto-wide-max: 1880px;
-}
-
-.app-shell {
-  min-width: 0 !important;
-}
-
-.content-area {
-  width: 100% !important;
-  max-width: none !important;
-  padding-left: clamp(14px, 1.4vw, 26px) !important;
-  padding-right: clamp(14px, 1.4vw, 26px) !important;
-}
-
-.panel,
-.home-screen,
-#homeScreen {
-  width: min(100%, var(--mantto-page-max)) !important;
-  max-width: var(--mantto-page-max) !important;
-}
-
-.panel {
-  padding: clamp(18px, 1.45vw, 28px) !important;
-}
-
-#pedidosAceptados,
-#peticion,
-#almacen,
-#kardex,
-#historialPeticiones,
-#historialOt,
-#historialCalificaciones,
-#atenderAviso,
-#ot,
-#aviso,
-#cerrarOt,
-#calificarOt,
-#ingresoItem,
-#config {
-  width: min(100%, var(--mantto-wide-max)) !important;
-  max-width: var(--mantto-wide-max) !important;
-}
-
-.screen-head {
-  width: 100% !important;
-}
-
-.table-wrap,
-.subpanel,
-.form-block,
-.dashboard-card,
-.config-toolbar {
-  width: 100% !important;
-  max-width: none !important;
-}
-
-.form-grid {
-  grid-template-columns: repeat(3, minmax(220px, 1fr)) !important;
-}
-
-.form-block-grid {
-  grid-template-columns: repeat(4, minmax(190px, 1fr)) !important;
-}
-
-.filter-grid {
-  grid-template-columns: repeat(4, minmax(190px, 1fr)) !important;
-}
-
-.kpi-grid {
-  grid-template-columns: repeat(6, minmax(150px, 1fr)) !important;
-}
-
-.dashboard-layout {
-  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-}
-
-.charts-row {
-  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-}
-
-.config-cards {
-  grid-template-columns: repeat(5, minmax(180px, 1fr)) !important;
-}
-
-.accepted-wms-layout {
-  grid-template-columns: minmax(720px, 1fr) minmax(360px, 440px) !important;
-  gap: 18px !important;
-  min-height: min(820px, calc(100vh - 130px)) !important;
-  height: min(840px, calc(100vh - 126px)) !important;
-}
-
-.accepted-wms-stage,
-.warehouse3d-shell {
-  min-width: 0 !important;
-  min-height: 700px !important;
-}
-
-.accepted-wms-stage iframe,
-.warehouse3d-shell iframe,
-iframe[src*="warehouse3d"] {
-  min-height: 700px !important;
-}
-
-.accepted-wms-side {
-  min-width: 360px !important;
-}
-
-#pedidoAceptadoCategorias.accepted-category-grid,
-.accepted-category-grid {
-  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-  max-height: 250px !important;
-}
-
-.peticion-wms-layout-v65 {
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px) !important;
-  gap: 18px !important;
-  align-items: start !important;
-}
-
-.peticion-category-grid-large {
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)) !important;
-  gap: 16px !important;
-}
-
-.peticion-category-cover {
-  min-height: 172px !important;
-  grid-template-columns: 132px minmax(0, 1fr) !important;
-}
-
-.peticion-category-group.is-open {
-  grid-column: 1 / -1 !important;
-}
-
-.peticion-category-list-open,
-.peticion-category-list {
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)) !important;
-}
-
-.peticion-material-row {
-  grid-template-columns: minmax(260px, 1fr) 130px 128px auto !important;
-}
-
-.almacen-category-quick-grid {
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)) !important;
-}
-
-.inventory-category-summary {
-  grid-template-columns: repeat(4, minmax(180px, 1fr)) !important;
-}
-
-table {
-  min-width: 1080px !important;
-}
-
-.close-ot-table table,
-#historialOt table,
-#historialPeticiones table,
-#kardex table,
-#almacen table {
-  min-width: 1260px !important;
-}
-
-@media (min-width: 1600px) {
-  .content-area {
-    padding-left: 34px !important;
-    padding-right: 34px !important;
-  }
-
-  .accepted-wms-layout {
-    grid-template-columns: minmax(900px, 1fr) 430px !important;
-  }
-
-  .peticion-category-grid-large {
-    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)) !important;
-  }
-}
-
-@media (max-width: 1280px) {
-  .accepted-wms-layout,
-  .peticion-wms-layout-v65 {
-    grid-template-columns: 1fr !important;
-    height: auto !important;
-  }
-
-  .accepted-wms-side {
-    min-width: 0 !important;
-  }
-
-  .accepted-wms-stage,
-  .accepted-wms-stage iframe,
-  .warehouse3d-shell iframe,
-  iframe[src*="warehouse3d"] {
-    min-height: 560px !important;
-  }
-
-  .form-grid,
-  .form-block-grid,
-  .filter-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-  }
-}
-
-@media (max-width: 760px) {
-  .content-area {
-    padding-left: 10px !important;
-    padding-right: 10px !important;
-  }
-
-  .panel {
-    padding: 14px !important;
-  }
-
-  .form-grid,
-  .form-block-grid,
-  .filter-grid,
-  .kpi-grid,
-  .dashboard-layout,
-  .charts-row,
-  .config-cards,
-  .inventory-category-summary,
-  .peticion-category-grid-large,
-  .peticion-category-list-open,
-  .peticion-category-list {
-    grid-template-columns: 1fr !important;
-  }
-
-  .peticion-category-cover,
-  .peticion-material-row {
-    grid-template-columns: 1fr !important;
-  }
-}
-
 /* v70 - Aprovechar mejor el ancho disponible en todas las pantallas */
 :root {
   --mantto-page-max: 1720px;
@@ -2634,4 +2398,168 @@ iframe[src*="warehouse3d_v72"] {
   background: #fbfdff;
   padding: 14px;
   margin-bottom: 14px;
+}
+
+/* v74 - Categoria visible en Peticion de item */
+.peticion-category-inline,
+.cart-category-v74 {
+  width: fit-content;
+  display: inline-flex !important;
+  align-items: center;
+  min-height: 22px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--primary-soft, #e8f4ff);
+  color: var(--primary-dark, #064b8f) !important;
+  padding: 3px 9px;
+  font-size: 12px !important;
+  font-weight: 900 !important;
+}
+
+.cart-row-v46 .cart-category-v74 {
+  margin-top: 5px;
+}
+
+
+
+
+
+
+
+/* MANTTO v76 - categorias globales y sede por usuario */
+
+.global-sede-filter {
+  width: min(100%, 1880px);
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line, #e3eaf2);
+  border-radius: var(--radius, 8px);
+  background: #ffffff;
+  padding: 10px 14px;
+  box-shadow: 0 8px 18px rgba(12, 42, 80, 0.06);
+}
+
+.global-sede-filter label {
+  min-width: min(420px, 100%);
+}
+
+.global-sede-filter span {
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.global-sede-filter select:disabled {
+  background: #eef3f8;
+  color: var(--primary-dark, #064b8f);
+  cursor: not-allowed;
+  font-weight: 900;
+}
+
+.almacen-category-chip-wrap {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.almacen-category-chip-wrap .almacen-category-chip {
+  width: 100%;
+}
+
+.category-delete-mini {
+  min-height: 30px;
+  padding: 6px 8px;
+  background: var(--danger-soft, #fff0ef);
+  color: var(--danger, #c7372f);
+  border: 1px solid #f4b4ae;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.category-modal-actions {
+  justify-content: flex-start;
+}
+
+.peticion-category-grid-large {
+  align-items: stretch !important;
+}
+
+.peticion-category-group {
+  min-width: 0 !important;
+}
+
+.peticion-category-cover {
+  width: 100% !important;
+}
+
+.category-image,
+.category-image-large {
+  background-repeat: no-repeat;
+  background-color: #eef3f8;
+}
+
+.category-image[style=""],
+.category-image-large[style=""] {
+  background-image: none;
+}
+
+@media (max-width: 760px) {
+  .global-sede-filter {
+    display: grid;
+  }
+
+  .global-sede-filter span {
+    white-space: normal;
+  }
+}
+/* v77 - sede global por usuario y personal desde DB Usuarios */
+.personal-users-note {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.global-sede-filter {
+  border-left-width: 6px;
+}
+
+.global-sede-filter select:disabled {
+  background: #f1f5f9;
+  color: #0f3f68;
+  font-weight: 900;
+}
+
+#avisoEquipmentSelector label:has([data-filter="sede"]),
+#otEquipmentSelector label:has([data-filter="sede"]),
+#avisoEquipmentSelector label:has([data-code-pre-filter="sede"]),
+#otEquipmentSelector label:has([data-code-pre-filter="sede"]) {
+  display: none !important;
+}
+
+/* v78 - DB Personal eliminado y campos de sede/ubicacion ocultos en generacion */
+.tabs.config-cards [data-tab="personal"],
+button[data-tab="personal"] {
+  display: none !important;
+}
+
+.mantto-hidden-field {
+  display: none !important;
+}
+
+#avisoForm input[name="sede"],
+#avisoForm input[name="ubicacion"],
+#otForm input[name="sede"],
+#otForm input[name="ubicacion"] {
+  display: none !important;
+}
+/* v85 - sede global: solo ADMIN puede ver selector de sede */
+body.is-normal-user #filtroSedeGlobalBar,
+body:not(.is-admin-user) #filtroSedeGlobalBar {
+  display: none !important;
+}
+/* v87 - Seguridad visual de sede: solo ADMIN puede ver el selector global. */
+body.is-normal-user #filtroSedeGlobalBar,
+body:not(.is-admin-user) #filtroSedeGlobalBar {
+  display: none !important;
 }

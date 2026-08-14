@@ -2,6 +2,7 @@ const state = {
   token: localStorage.getItem("mantto_token") || "",
   user: JSON.parse(localStorage.getItem("mantto_user") || "null"),
   catalogos: { equipos: [], personal: [], productos: [], repuestos: [] },
+  usuariosPersonal: [],
   ots: [],
   avisos: [],
   peticiones: [],
@@ -12,6 +13,8 @@ const state = {
   dashboard: null,
   currentView: "home",
   currentConfigTab: "equipos",
+  filtroSedeGlobal: "",
+  sedesDisponibles: [],
   appTimer: null,
   loginTimer: null,
   equipmentSelectors: {},
@@ -80,6 +83,7 @@ const MANTTO_ITEM_KEYS = {
   codigo: ["codigo", "código", "cod", "cod_item", "item_codigo"],
   tipo: ["tipo", "clase"],
   categoria: ["categoria", "categoría", "familia", "grupo"],
+  sede: ["sede", "planta", "local", "centro", "sucursal"],
   area: ["area", "área"],
   descripcion: ["descripcion", "descripción", "nombre", "item_nombre", "producto", "repuesto"],
   modelo: ["modelo", "modelo_repuesto", "referencia"],
@@ -107,8 +111,8 @@ const MANTTO_CATEGORIAS_BASE_REPUESTOS = [
 ];
 
 function manttoWarehouse3dUrl(embedded = false) {
-  const file = "warehouse3d_v73/warehouse3d.html";
-  const query = embedded ? "?embedded=1&v=73" : "?v=73";
+  const file = "warehouse3d_v85/warehouse3d.html";
+  const query = embedded ? "?embedded=1&v=85" : "?v=85";
   const match = window.location.pathname.match(/^\/networks\/([^/]+)\//);
   if (match) return `/networks/${match[1]}/${file}${query}`;
   return `/static/${file}${query}`;
@@ -150,6 +154,10 @@ function categoriasRepuestos() {
   ];
 }
 
+function isCustomCategoria(id) {
+  return Boolean(customCategoriaMap()[id]);
+}
+
 function addCustomCategoria(nombre, imagen = "") {
   const cleanName = String(nombre || "").trim();
   if (!cleanName) return "";
@@ -175,6 +183,24 @@ function addCustomCategoria(nombre, imagen = "") {
   return id;
 }
 
+function deleteCustomCategoria(id) {
+  if (!isCustomCategoria(id)) return false;
+  const map = customCategoriaMap();
+  const deletedName = map[id]?.nombre || "";
+  delete map[id];
+  saveCustomCategoriaMap(map);
+  const manual = categoriaManualMap();
+  Object.keys(manual).forEach((codigo) => {
+    if (manual[codigo] === id) delete manual[codigo];
+  });
+  saveCategoriaManualMap(manual);
+  ["almacenCategoria", "pedidoAceptadoCategoria", "peticionCategoriaAbierta"].forEach((key) => {
+    if (state[key] === id) state[key] = key === "peticionCategoriaAbierta" ? "" : "todas";
+  });
+  toast(`Categoria eliminada${deletedName ? `: ${deletedName}` : ""}`, "success");
+  return true;
+}
+
 function categoriaManualMap() {
   try {
     return JSON.parse(localStorage.getItem("mantto_categoria_repuestos") || "{}");
@@ -194,6 +220,7 @@ function authHeaders() {
 async function api(path, options = {}) {
   const headers = options.headers || {};
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  if (isAdminUser() && state.filtroSedeGlobal) headers["X-Sede-Scope"] = state.filtroSedeGlobal;
   if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
   const method = String(options.method || "GET").toUpperCase();
   let requestPath = path;
@@ -286,6 +313,28 @@ function removeReferenceFields() {
 
 const removeReferenceFieldsForOt = removeReferenceFields;
 
+function hideScopedLocationFields() {
+  ["avisoForm", "otForm"].forEach((formId) => {
+    const form = $(formId);
+    if (!form) return;
+    ["sede"].forEach((name) => {
+      const field = form.elements?.[name];
+      if (!field) return;
+      const label = field.closest("label");
+      field.type = "hidden";
+      field.required = false;
+      if (label) {
+        label.classList.add("mantto-hidden-field");
+        label.style.display = "none";
+      }
+    });
+  });
+}
+
+function removePersonalConfigTab() {
+  document.querySelectorAll('[data-tab="personal"]').forEach((button) => button.remove());
+}
+
 function ensureOtExtraTextFields(form, source = {}) {
   if (!form || form.querySelector("[data-ot-extra-text]")) return;
   const target = form.querySelector('label.span-2 textarea[name="descripcion_trabajo"]')?.closest("label");
@@ -338,11 +387,12 @@ function userRoleLabel(role) {
 function setUserUi() {
   const username = state.user?.full_name || state.user?.username || "Usuario";
   const role = state.user?.cargo || userRoleLabel(state.user?.role);
+  enforceUserSedeScope();
   ["sidebarUserName", "topbarUserName"].forEach((id) => {
     if ($(id)) $(id).textContent = username;
   });
   ["sidebarUserRole", "topbarUserRole"].forEach((id) => {
-    if ($(id)) $(id).textContent = role;
+    if ($(id)) $(id).textContent = [role, userSedeScope()].filter(Boolean).join(" · ");
   });
   document.querySelectorAll(".avatar").forEach((avatar) => {
     avatar.textContent = (state.user?.username || "U").slice(0, 1).toUpperCase();
@@ -356,6 +406,17 @@ function compactText(value) {
 
 function currentPersonalRecord() {
   const user = state.user || {};
+  if (user.username || user.full_name) {
+    return {
+      username: user.username || "",
+      nombre: user.full_name || user.username || "",
+      sede: user.sede || "",
+      area: user.area || "",
+      cargo: user.cargo || user.role || "",
+      role: user.role || "",
+      active: true,
+    };
+  }
   const candidates = [
     user.username,
     user.full_name,
@@ -432,6 +493,8 @@ function showApp() {
   ensureManttoV46Ui();
   ensureVoiceAssistantUi();
   ensureConfigAccessTab();
+  removePersonalConfigTab();
+  hideScopedLocationFields();
   $("loginView").classList.add("hidden");
   $("appView").classList.remove("hidden");
   document.body.classList.add("is-app");
@@ -489,16 +552,19 @@ function setView(id) {
   if (nextView === "home") renderDashboard("app");
   if (nextView === "aviso") {
     removeReferenceFields();
+    hideScopedLocationFields();
     ensureAvisoServiceSelect();
     ensureAvisoImageInput();
     renderEquipmentSelector("aviso");
   }
   if (nextView === "ot") {
     removeReferenceFieldsForOt();
+    hideScopedLocationFields();
     ensureOtExtraTextFields($("otForm"));
     ensureOtTypeSelects($("otForm"));
     renderEquipmentSelector("ot");
   }
+  if (nextView === "peticion") renderPeticiones();
   if (nextView === "almacen") renderAlmacen();
   if (nextView === "ingresoItem") renderIngresoItem();
   if (nextView === "kardex") renderKardex();
@@ -1176,10 +1242,11 @@ function ensurePanel(id, html) {
 function ensureConfigAccessTab() {
   const tabs = document.querySelector(".tabs.config-cards");
   if (!tabs) return;
+  removePersonalConfigTab();
   if (!tabs.querySelector('[data-tab="accesos"]')) {
     const button = document.createElement("button");
     button.dataset.tab = "accesos";
-    button.innerHTML = "<strong>Accesos</strong><span>Permisos segun DB Personal</span>";
+    button.innerHTML = "<strong>Accesos</strong><span>Permisos segun DB Usuarios</span>";
     tabs.appendChild(button);
     button.addEventListener("click", () => renderConfig("accesos"));
   }
@@ -1195,6 +1262,20 @@ function ensureConfigAccessTab() {
 async function loadAll(options = {}) {
   const { forceRender = false, silent = false } = options;
   try {
+    const me = await apiOptional("/api/me", state.user || null);
+    if (me) {
+      state.user = me;
+      localStorage.setItem("mantto_user", JSON.stringify(state.user));
+    }
+    enforceUserSedeScope();
+    const sedesInfo = await apiOptional("/api/sedes", { sedes: [], current: userSedeScope(), is_admin: isAdminUser() });
+    state.sedesDisponibles = Array.isArray(sedesInfo?.sedes) ? sedesInfo.sedes : [];
+    if (isAdminUser()) {
+      const saved = localStorage.getItem("mantto_filtro_sede_global") || "";
+      state.filtroSedeGlobal = state.sedesDisponibles.some((sede) => sameText(sede, saved)) ? saved : "";
+    } else {
+      state.filtroSedeGlobal = sedesInfo?.current || userSedeScope() || "";
+    }
     const [equipos, personal, productos, repuestos, ots, avisos, peticiones, calificaciones, dashboard, movimientos] = await Promise.all([
       api("/api/catalogos/equipos"),
       api("/api/catalogos/personal"),
@@ -1207,11 +1288,13 @@ async function loadAll(options = {}) {
       api("/api/dashboard"),
       apiOptional("/api/inventario-movimientos", []),
     ]);
+    enforceUserSedeScope();
     state.catalogos = { equipos, personal, productos, repuestos };
-    state.ots = ots;
-    state.avisos = avisos;
+    state.usuariosPersonal = personal || [];
+    state.ots = ots || [];
+    state.avisos = avisos || [];
     state.peticiones = peticiones;
-    state.calificaciones = calificaciones;
+    state.calificaciones = calificaciones || [];
     state.dashboard = dashboard;
     state.inventarioMovimientos = movimientos || [];
     state.historialPeticiones = await apiOptional("/api/peticiones-historial", peticiones);
@@ -1236,7 +1319,10 @@ async function refreshAfterMutation(options = {}) {
 
 function renderSafeView() {
   renderDashboard("app");
+  renderFiltroSedeGlobal();
   removeReferenceFields();
+  hideScopedLocationFields();
+  removePersonalConfigTab();
   renderEquipmentSelector("aviso");
   removeReferenceFieldsForOt();
   ensureOtExtraTextFields($("otForm"));
@@ -1258,6 +1344,7 @@ function renderSafePollingUpdates() {
   if (isUserEditing()) return;
   if (state.currentView === "home") renderDashboard("app");
   if (state.currentView === "atenderItem") renderPeticiones();
+  if (state.currentView === "peticion") renderPeticiones();
   if (state.currentView === "atenderAviso" && !$("atenderAvisoBox")?.classList.contains("hidden")) return;
   if (state.currentView === "atenderAviso") renderAtenderAviso();
   if (state.currentView === "historialPeticiones") renderHistorialPeticiones();
@@ -1313,10 +1400,10 @@ function stopLoginPolling() {
 }
 
 function fillLists() {
-  if ($("equiposList")) $("equiposList").innerHTML = state.catalogos.equipos.map((e) => `<option value="${escapeHtml(equipoValue(e, "codigo") || "")}"></option>`).join("");
+  if ($("equiposList")) $("equiposList").innerHTML = rowsBySede(state.catalogos.equipos).map((e) => `<option value="${escapeHtml(equipoValue(e, "codigo") || "")}"></option>`).join("");
   if ($("personalList")) $("personalList").innerHTML = tecnicosDisponibles().map((p) => `<option value="${escapeHtml(personalValue(p, "nombre") || p.codigo || "")}">${escapeHtml(personalValue(p, "cargo"))}</option>`).join("");
   fillTechnicianSelects();
-  const items = [...state.catalogos.productos, ...state.catalogos.repuestos];
+  const items = rowsBySede([...state.catalogos.productos, ...state.catalogos.repuestos]);
   if ($("itemsList")) $("itemsList").innerHTML = items.map((i) => `<option value="${escapeHtml(itemValue(i, "codigo") || "")}">${escapeHtml(itemValue(i, "descripcion") || "")}</option>`).join("");
   if ($("otsList")) $("otsList").innerHTML = state.ots.map((o) => `<option value="${escapeHtml(o.numero || "")}"></option>`).join("");
   if ($("historialSede")) fillSelect($("historialSede"), uniqueValues(state.catalogos.equipos, "sede"), "Todas");
@@ -1396,7 +1483,73 @@ function inventoryRows() {
   return [
     ...(state.catalogos.productos || []).map((row) => ({ ...row, _tabla: "productos", _tipo: itemValue(row, "tipo") || "Producto" })),
     ...(state.catalogos.repuestos || []).map((row) => ({ ...row, _tabla: "repuestos", _tipo: itemValue(row, "tipo") || "Repuesto" })),
-  ].map(normalizarRepuesto);
+  ].filter(matchesSedeGlobal).map(normalizarRepuesto);
+}
+
+function isAdminUser(user = state.user) {
+  const role = normalizeText(user?.role || "");
+  return role === "admin" || role === "administrador";
+}
+
+function userSedeScope(user = state.user) {
+  return canonicalSedeValue(
+    user?.sede
+    || user?.SEDE
+    || user?.planta
+    || user?.local
+    || user?.centro
+    || user?.sucursal
+    || ""
+  );
+}
+
+function effectiveSedeScope() {
+  if (isAdminUser()) return sedeGlobalValue();
+  return userSedeScope();
+}
+
+function enforceUserSedeScope() {
+  if (isAdminUser()) {
+    document.body.classList.add("is-admin-user");
+    document.body.classList.remove("is-normal-user");
+    return;
+  }
+  removeFiltroSedeGlobal();
+  document.body.classList.remove("is-admin-user");
+  document.body.classList.add("is-normal-user");
+  const sede = userSedeScope();
+  localStorage.removeItem("mantto_filtro_sede_global");
+  if (!sede) {
+    state.filtroSedeGlobal = "";
+    return;
+  }
+  state.filtroSedeGlobal = sede;
+}
+
+function clearSessionScopedState() {
+  [
+    "mantto_filtro_sede_global",
+    "mantto_warehouse3d_payload",
+  ].forEach((key) => localStorage.removeItem(key));
+  state.filtroSedeGlobal = "";
+  state.sedesDisponibles = [];
+  state.catalogos = { equipos: [], personal: [], productos: [], repuestos: [] };
+  state.usuariosPersonal = [];
+  state.ots = [];
+  state.avisos = [];
+  state.peticiones = [];
+  state.historialPeticiones = [];
+  state.calificaciones = [];
+  state.inventarioMovimientos = [];
+  state.dashboard = null;
+  state.equipmentSelectors = {};
+  state.peticionCart = [];
+  state.peticionSearch = "";
+  state.peticionCategoriaAbierta = "";
+  state.pedidoAceptadoComponentes = [];
+  state.pedidoAceptadoCategoria = "todas";
+  state.pedidoAceptadoSearch = "";
+  state.warehouse3dPayload = null;
 }
 
 function categoriaById(id) {
@@ -1491,11 +1644,95 @@ function itemIdentity(row) {
   return `${row._tabla || ""}:${row.id || itemValue(row, "codigo") || itemValue(row, "descripcion")}`;
 }
 
+function sedeGlobalValue() {
+  return canonicalSedeValue(state.filtroSedeGlobal || "");
+}
+
+function canonicalSedeValue(value) {
+  const raw = String(value || "").trim();
+  const normalized = normalizeText(raw);
+  if (!normalized) return "";
+  const found = (state.sedesDisponibles || []).find((sede) => normalizeText(sede) === normalized);
+  return found || raw.toUpperCase();
+}
+
+function rowSedeValue(row) {
+  return canonicalSedeValue(
+    row?.sede
+    || row?.SEDE
+    || equipoValue(row, "sede")
+    || personalValue(row, "sede")
+    || itemValue(row, "sede")
+    || ""
+  );
+}
+
+function matchesSedeGlobal(row) {
+  const sede = effectiveSedeScope();
+  if (!sede) return isAdminUser();
+  return sameText(rowSedeValue(row), sede);
+}
+
+function rowsBySede(rows = []) {
+  return (rows || []).filter(matchesSedeGlobal);
+}
+
+function sedesGlobales() {
+  return state.sedesDisponibles || [];
+}
+
+function ensureFiltroSedeGlobal() {
+  if (!isAdminUser()) {
+    removeFiltroSedeGlobal();
+    return;
+  }
+  if ($("filtroSedeGlobalBar")) return;
+  const area = document.querySelector(".content-area");
+  if (!area) return;
+  const bar = document.createElement("div");
+  bar.id = "filtroSedeGlobalBar";
+  bar.className = "global-sede-filter";
+  bar.innerHTML = `
+    <label>Filtro general por sede
+      <select id="filtroSedeGlobalSelect"></select>
+    </label>
+    <span id="filtroSedeGlobalInfo" class="muted"></span>
+  `;
+  area.insertBefore(bar, area.firstElementChild);
+  $("filtroSedeGlobalSelect").addEventListener("change", (event) => {
+    if (!isAdminUser()) return;
+    state.filtroSedeGlobal = event.target.value;
+    localStorage.setItem("mantto_filtro_sede_global", state.filtroSedeGlobal);
+    state.equipmentSelectors = {};
+    state.peticionCategoriaAbierta = "";
+    loadAll({ forceRender: true, silent: true });
+  });
+}
+
+function renderFiltroSedeGlobal() {
+  enforceUserSedeScope();
+  if (!isAdminUser()) {
+    removeFiltroSedeGlobal();
+    return;
+  }
+  ensureFiltroSedeGlobal();
+  const select = $("filtroSedeGlobalSelect");
+  if (!select) return;
+  fillSelect(select, sedesGlobales(), "Todas las sedes", sedeGlobalValue() || "");
+  select.disabled = false;
+  const label = state.filtroSedeGlobal ? `Admin filtrando: ${state.filtroSedeGlobal}` : "Admin: mostrando todas las sedes";
+  if ($("filtroSedeGlobalInfo")) $("filtroSedeGlobalInfo").textContent = label;
+}
+
+function removeFiltroSedeGlobal() {
+  $("filtroSedeGlobalBar")?.remove();
+}
+
 function personalValue(row, key) {
   const aliases = {
     sede: ["sede", "SEDE"],
     area: ["area", "AREA"],
-    nombre: ["nombre", "NOMBRE"],
+    nombre: ["nombre", "NOMBRE", "full_name", "username"],
     cargo: ["cargo", "CARGO"],
   }[key] || [key];
   for (const alias of aliases) {
@@ -1505,7 +1742,13 @@ function personalValue(row, key) {
 }
 
 function tecnicosDisponibles() {
-  return state.catalogos.personal.filter((p) => String(personalValue(p, "cargo")).trim().toLowerCase() === "tecnico");
+  return rowsBySede(state.usuariosPersonal || state.catalogos.personal || [])
+    .filter((p) => {
+      const role = normalizeText(p.role || "");
+      const cargo = normalizeText(personalValue(p, "cargo"));
+      const active = p.active === undefined || p.active === true || p.active === 1;
+      return active && (role === "tecnico" || cargo === "tecnico" || cargo.includes("mantenimiento"));
+    });
 }
 
 function esJefe() {
@@ -1518,7 +1761,7 @@ function esJefe() {
 function uniqueValues(rows, key) {
   const seen = new Map();
   rows.forEach((row) => {
-    const value = String(equipoValue(row, key) || "").trim();
+    const value = String(key === "tipo_servicio" ? normalizeServiceValue(equipmentServiceValue(row)) : equipoValue(row, key) || "").trim();
     if (!value) return;
     const normalized = normalizeText(value);
     if (!seen.has(normalized)) seen.set(normalized, value);
@@ -1587,6 +1830,23 @@ function ensureAvisoServiceSelect() {
   const form = $("avisoForm");
   if (!form) return;
   form.querySelectorAll("[data-aviso-service-field]").forEach((node) => node.remove());
+  const field = form.elements?.tipo_servicio;
+  if (!field) return;
+  const label = field.closest("label");
+  if (label) {
+    label.dataset.avisoServiceField = "true";
+    label.style.display = "";
+    label.classList.remove("mantto-hidden-field");
+  }
+  if (field.tagName !== "SELECT") {
+    const value = field.value || "";
+    const select = document.createElement("select");
+    select.name = "tipo_servicio";
+    select.required = true;
+    select.innerHTML = `<option value="">Seleccione</option><option value="interno">interno</option><option value="externo">externo</option>`;
+    select.value = value;
+    field.replaceWith(select);
+  }
 }
 
 function ensureAvisoImageInput() {
@@ -1615,6 +1875,13 @@ function equipmentServiceValue(row) {
   return row?.tipo_servicio || row?.interno_externo || row?.origen || equipoValue(row, "estado") || "";
 }
 
+function normalizeServiceValue(value) {
+  const text = normalizeText(value);
+  if (text.includes("extern")) return "externo";
+  if (text.includes("intern")) return "interno";
+  return String(value || "").trim();
+}
+
 function uniqueEquipmentServiceValues(rows) {
   const values = uniqueFormValues(rows, ["estado", "tipo_servicio", "interno_externo", "origen"]);
   return values.length ? values : ["interno", "externo"];
@@ -1624,7 +1891,8 @@ function fillAvisoServiceSelect(rows = state.catalogos.equipos) {
   const form = $("avisoForm");
   const select = form?.elements?.tipo_servicio;
   if (!select) return;
-  fillSelect(select, uniqueEquipmentServiceValues(rows), "Seleccione", select.value || state.equipmentSelectors.aviso?.filters?.tipo_servicio || "");
+  const values = uniqueEquipmentServiceValues(rows).map(normalizeServiceValue).filter(Boolean);
+  fillSelect(select, [...new Set(values.length ? values : ["interno", "externo"])], "Seleccione", normalizeServiceValue(select.value || state.equipmentSelectors.aviso?.filters?.tipo_servicio || ""));
 }
 
 function normalizeText(value) {
@@ -1677,7 +1945,7 @@ function renderEquipmentSelector(scope) {
       </button>
       <button type="button" data-selector-mode="filter" class="${st.mode === "filter" ? "active" : ""}">
         <strong>🔍 Buscar por filtros</strong>
-        <span>${scope === "aviso" ? "Sede, ubicacion, proceso y sistema" : "Busqueda completa por filtros"}</span>
+        <span>${scope === "aviso" ? "Proceso y sistema de la sede del usuario" : "Busqueda por datos del equipo"}</span>
       </button>
     </div>
     <div class="selector-body"></div>
@@ -1697,16 +1965,7 @@ function renderEquipmentSelector(scope) {
 
 function renderEquipmentCodeSearch(scope, body) {
   const st = state.equipmentSelectors[scope];
-  const serviceFilters = scope === "aviso"
-    ? `
-      <div class="filter-grid">
-        <label>Sede<select data-code-pre-filter="sede"></select></label>
-        <label>Interno / externo<select data-code-pre-filter="tipo_servicio"></select></label>
-      </div>
-    `
-    : "";
   body.innerHTML = `
-    ${serviceFilters}
     <div class="equipment-search">
       <label>Codigo de equipo<input data-code-search value="${escapeHtml(st.code || "")}" placeholder="Escriba codigo: EV, EV1, WT..." autocomplete="off"></label>
       <div data-code-results class="code-results"></div>
@@ -1714,20 +1973,6 @@ function renderEquipmentCodeSearch(scope, body) {
   `;
   const input = body.querySelector("[data-code-search]");
   const results = body.querySelector("[data-code-results]");
-  if (scope === "aviso") {
-    const sedeSelect = body.querySelector('[data-code-pre-filter="sede"]');
-    const tipoSelect = body.querySelector('[data-code-pre-filter="tipo_servicio"]');
-    fillSelect(sedeSelect, uniqueValues(state.catalogos.equipos, "sede"), "Seleccione", st.filters.sede || "");
-    const rowsBySede = state.catalogos.equipos.filter((row) => !sedeSelect.value || rowMatchesFilter(row, "sede", sedeSelect.value));
-    fillSelect(tipoSelect, uniqueEquipmentServiceValues(rowsBySede), "Seleccione", st.filters.tipo_servicio || "");
-    [sedeSelect, tipoSelect].forEach((select) => {
-      select.addEventListener("change", () => {
-        st.filters[select.dataset.codePreFilter] = select.value;
-        if (select.dataset.codePreFilter === "sede") delete st.filters.tipo_servicio;
-        renderEquipmentCodeSearch(scope, body);
-      });
-    });
-  }
   const renderResults = () => renderEquipmentCodeResults(scope, results, input.value);
   input.addEventListener("input", () => {
     st.code = input.value;
@@ -1744,10 +1989,9 @@ function renderEquipmentCodeResults(scope, host, query) {
     return;
   }
 
-  const rows = state.catalogos.equipos
+  const rows = rowsBySede(state.catalogos.equipos)
     .filter((item) => normalizeText(equipoValue(item, "codigo")).includes(normalizeText(q)))
-    .filter((item) => scope !== "aviso" || !state.equipmentSelectors.aviso?.filters?.sede || rowMatchesFilter(item, "sede", state.equipmentSelectors.aviso.filters.sede))
-    .filter((item) => scope !== "aviso" || !state.equipmentSelectors.aviso?.filters?.tipo_servicio || sameText(equipmentServiceValue(item), state.equipmentSelectors.aviso.filters.tipo_servicio))
+    .filter((item) => scope !== "aviso" || !state.equipmentSelectors.aviso?.filters?.tipo_servicio || sameText(normalizeServiceValue(equipmentServiceValue(item)), normalizeServiceValue(state.equipmentSelectors.aviso.filters.tipo_servicio)))
     .slice(0, 30);
 
   if (!rows.length) {
@@ -1797,9 +2041,8 @@ function renderEquipmentFilterSearch(scope, body) {
 
   if (scope === "aviso") {
     const order = [
-      ["sede", "Sede"],
-      ["tipo_servicio", "Interno / externo"],
       ["ubicacion", "Ubicacion"],
+      ["tipo_servicio", "Interno / externo"],
       ["proceso", "Proceso"],
       ["sistema", "Sistema"],
     ];
@@ -1814,7 +2057,7 @@ function renderEquipmentFilterSearch(scope, body) {
       </div>
     `;
 
-    let filtered = state.catalogos.equipos;
+    let filtered = rowsBySede(state.catalogos.equipos);
 
     order.forEach(([key]) => {
       const select = body.querySelector(`[data-filter="${key}"]`);
@@ -1823,7 +2066,7 @@ function renderEquipmentFilterSearch(scope, body) {
 
       if (select.value) {
         st.filters[key] = select.value;
-        filtered = filtered.filter((row) => key === "tipo_servicio" ? sameText(equipmentServiceValue(row), select.value) : rowMatchesFilter(row, key, select.value));
+        filtered = filtered.filter((row) => equipmentMatchesFilterKey(row, key, select.value));
       }
 
       select.addEventListener("change", () => {
@@ -1851,9 +2094,8 @@ function renderEquipmentFilterSearch(scope, body) {
 
   const order = scope === "ot"
     ? [
-        ["sede", "Sede"],
-        ["tipo_servicio", "Interno / externo"],
         ["ubicacion", "Ubicacion"],
+        ["tipo_servicio", "Interno / externo"],
         ["proceso", "Proceso"],
         ["sistema", "Sistema"],
         ["equipo", "Equipo"],
@@ -1862,9 +2104,7 @@ function renderEquipmentFilterSearch(scope, body) {
         ["codigo", "Codigo"],
       ]
     : [
-    ["sede", "Sede"],
     ["estado", "Estado"],
-    ["ubicacion", "Ubicacion"],
     ["proceso", "Proceso"],
     ["sistema", "Sistema"],
     ["equipo", "Equipo"],
@@ -1875,7 +2115,7 @@ function renderEquipmentFilterSearch(scope, body) {
 
   body.innerHTML = `<div class="filter-grid">${order.map(([key, label]) => `<label>${label}<select data-filter="${key}"></select></label>`).join("")}</div>`;
 
-  let filtered = state.catalogos.equipos;
+  let filtered = rowsBySede(state.catalogos.equipos);
 
   order.forEach(([key]) => {
     const select = body.querySelector(`[data-filter="${key}"]`);
@@ -1908,7 +2148,11 @@ function renderEquipmentFilterSearch(scope, body) {
 function applyOtFilterSelection(filters = {}) {
   const form = $("otForm");
   if (!form) return;
-  ["sede", "tipo_servicio", "ubicacion", "proceso", "sistema", "equipo", "sub_equipo", "tipo_equipo"].forEach((name) => setFormValue(form, name, filters[name] || ""));
+  const row = findEquipmentByFilters(filters);
+  setFormValue(form, "sede", filters.sede || effectiveSedeScope() || "");
+  setFormValue(form, "tipo_servicio", row ? normalizeServiceValue(equipmentServiceValue(row)) : normalizeServiceValue(filters.tipo_servicio || ""));
+  setFormValue(form, "ubicacion", row ? equipoValue(row, "ubicacion") : filters.ubicacion || "");
+  ["proceso", "sistema", "equipo", "sub_equipo", "tipo_equipo"].forEach((name) => setFormValue(form, name, filters[name] || ""));
   setFormValue(form, "equipo_codigo", filters.codigo || "");
   setFormValue(form, "componente", "");
   if (state.equipmentSelectors.ot) state.equipmentSelectors.ot.selected = null;
@@ -1916,12 +2160,12 @@ function applyOtFilterSelection(filters = {}) {
 
 function equipmentMatchesFilterKey(row, key, value) {
   if (!value) return true;
-  if (key === "tipo_servicio") return sameText(equipmentServiceValue(row), value);
+  if (key === "tipo_servicio") return sameText(normalizeServiceValue(equipmentServiceValue(row)), normalizeServiceValue(value));
   return rowMatchesFilter(row, key, value);
 }
 
 function findEquipmentByFilters(filters) {
-  return state.catalogos.equipos.find((row) => Object.entries(filters).every(([key, value]) => equipmentMatchesFilterKey(row, key, value)));
+  return rowsBySede(state.catalogos.equipos).find((row) => Object.entries(filters).every(([key, value]) => equipmentMatchesFilterKey(row, key, value)));
 }
 
 function findEquipmentForAviso(aviso) {
@@ -1963,7 +2207,7 @@ function matchingEquipmentForAviso(aviso) {
   const activeFilters = Object.fromEntries(
     Object.entries(avisoBaseFilters(aviso)).filter(([, value]) => String(value || "").trim())
   );
-  return state.catalogos.equipos.filter((row) =>
+  return rowsBySede(state.catalogos.equipos).filter((row) =>
     Object.entries(activeFilters).every(([key, value]) => rowMatchesFilter(row, key, value))
   );
 }
@@ -2102,7 +2346,7 @@ function applySelectedEquipment(scope, equipo, rerender = true) {
   st.filters = {
     sede: equipoValue(equipo, "sede"),
     estado: equipoValue(equipo, "estado"),
-    tipo_servicio: equipmentServiceValue(equipo),
+    tipo_servicio: normalizeServiceValue(equipmentServiceValue(equipo)),
     ubicacion: equipoValue(equipo, "ubicacion"),
     proceso: equipoValue(equipo, "proceso"),
     sistema: equipoValue(equipo, "sistema"),
@@ -2114,7 +2358,7 @@ function applySelectedEquipment(scope, equipo, rerender = true) {
 
   const form = scope === "aviso" ? $("avisoForm") : scope === "avisoAtender" ? $("avisoOtForm") : $("otForm");
   setFormValue(form, "sede", st.filters.sede);
-  setFormValue(form, "tipo_servicio", st.filters.tipo_servicio);
+  setFormValue(form, "tipo_servicio", normalizeServiceValue(st.filters.tipo_servicio));
   setFormValue(form, "rubro", equipoValue(equipo, "rubro"));
   setFormValue(form, "ubicacion", st.filters.ubicacion);
   setFormValue(form, "proceso", st.filters.proceso);
@@ -2169,9 +2413,11 @@ function clearSelectedEquipment(scope) {
 
   if (form) {
     [
-      "sede", "rubro", "ubicacion", "proceso", "sistema",
+      "rubro", "ubicacion", "proceso", "sistema",
       "equipo", "sub_equipo", "componente", "tipo_equipo", "equipo_codigo"
     ].forEach((name) => setFormValue(form, name, ""));
+    setFormValue(form, "sede", effectiveSedeScope() || "");
+    setFormValue(form, "tipo_servicio", "");
   }
 
   if (scope === "aviso") renderAvisoResumenSeleccion(null);
@@ -2210,7 +2456,7 @@ function renderAvisoResumenSeleccion(equipo = null) {
   }
 
   const f = st.filters || {};
-  if (!f.sede && !f.ubicacion && !f.proceso && !f.sistema) {
+  if (!f.ubicacion && !f.tipo_servicio && !f.proceso && !f.sistema) {
     el.textContent = "Seleccione los filtros para ver el resumen.";
     return;
   }
@@ -2218,8 +2464,8 @@ function renderAvisoResumenSeleccion(equipo = null) {
   el.innerHTML = `
     <strong>Resumen de seleccion</strong>
     <dl>
-      <dt>Sede</dt><dd>${escapeHtml(f.sede || "-")}</dd>
       <dt>Ubicacion</dt><dd>${escapeHtml(f.ubicacion || "-")}</dd>
+      <dt>Interno / externo</dt><dd>${escapeHtml(normalizeServiceValue(f.tipo_servicio) || "-")}</dd>
       <dt>Proceso</dt><dd>${escapeHtml(f.proceso || "-")}</dd>
       <dt>Sistema</dt><dd>${escapeHtml(f.sistema || "-")}</dd>
       <dt>Estado aviso</dt><dd>${badge("ABIERTO")}</dd>
@@ -2239,15 +2485,16 @@ function aplicarAvisoDesdeFiltros() {
   const st = state.equipmentSelectors.aviso || { filters: {} };
   const f = st.filters || {};
   const row = findEquipmentByFilters({
-    sede: f.sede,
+    sede: f.sede || effectiveSedeScope(),
     ubicacion: f.ubicacion,
+    tipo_servicio: f.tipo_servicio,
     proceso: f.proceso,
     sistema: f.sistema,
   });
 
-  setFormValue(form, "sede", f.sede || "");
-  setFormValue(form, "tipo_servicio", f.tipo_servicio || "");
-  setFormValue(form, "ubicacion", f.ubicacion || "");
+  setFormValue(form, "sede", f.sede || effectiveSedeScope() || "");
+  setFormValue(form, "tipo_servicio", row ? normalizeServiceValue(equipmentServiceValue(row)) : normalizeServiceValue(f.tipo_servicio || ""));
+  setFormValue(form, "ubicacion", row ? equipoValue(row, "ubicacion") : f.ubicacion || "");
   setFormValue(form, "proceso", f.proceso || "");
   setFormValue(form, "sistema", f.sistema || "");
   setFormValue(form, "rubro", row ? equipoValue(row, "rubro") : "");
@@ -2258,7 +2505,6 @@ function aplicarAvisoDesdeFiltros() {
   setFormValue(form, "tipo_equipo", "");
 
   st.selected = row || null;
-  fillAvisoServiceSelect(state.catalogos.equipos.filter((item) => !f.sede || rowMatchesFilter(item, "sede", f.sede)));
   renderAvisoResumenSeleccion(row || null);
 }
 
@@ -3016,7 +3262,7 @@ function renderPeticionSearchResults() {
   results.innerHTML = renderPeticionGroupedResults();
 }
 
-function peticionFilteredRows(limit = 220) {
+function peticionFilteredRows() {
   const q = normalizeText(state.peticionSearch || "");
   return inventoryRows()
     .filter((row) => {
@@ -3029,20 +3275,37 @@ function peticionFilteredRows(limit = 220) {
         itemValue(row, "ubicacion"),
       ].map(normalizeText).join(" ");
       return !q || haystack.includes(q);
-    })
-    .slice(0, limit);
+    });
 }
 
 function renderPeticionGroupedResults() {
   const rows = peticionFilteredRows();
-  if (!rows.length) return '<p class="empty-state">No hay materiales disponibles con esa busqueda.</p>';
+  const allInventoryRows = inventoryRows();
   const groups = new Map();
   rows.forEach((row) => {
     const categoria = row.categoria_virtual || categorizarRepuesto(row) || "Sin categorizar";
     if (!groups.has(categoria)) groups.set(categoria, []);
     groups.get(categoria).push(row);
   });
+  categoriasRepuestos().forEach((cat) => {
+    if (cat.id === "todas") return;
+    if (!groups.has(cat.nombre)) groups.set(cat.nombre, []);
+  });
   const entries = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], "es"));
+  if (!allInventoryRows.length) {
+    return `
+      <p class="empty-state">
+        No hay materiales cargados para la sede actual. Peticion de item usa el mismo inventario que Almacen.
+      </p>
+    `;
+  }
+  if (!rows.length && state.peticionSearch) {
+    return `
+      <p class="empty-state">
+        No se encontraron materiales para la busqueda actual en el inventario de Almacen.
+      </p>
+    `;
+  }
   if (state.peticionCategoriaAbierta) {
     const selectedEntry = entries.find(([categoria]) => categoriaByName(categoria).id === state.peticionCategoriaAbierta);
     if (selectedEntry) {
@@ -3060,7 +3323,7 @@ function renderPeticionGroupedResults() {
             </div>
           </div>
           <div class="peticion-category-list-open">
-            ${items.map(renderMaterialListRow).join("")}
+            ${items.length ? items.map(renderMaterialListRow).join("") : '<p class="empty-state">Esta categoria aun no tiene materiales asignados en el inventario de Almacen.</p>'}
           </div>
         </div>
       `;
@@ -3096,11 +3359,13 @@ function renderMaterialListRow(row) {
   const stock = inventoryNumber(row, "cantidad");
   const unidad = itemValue(row, "unidad");
   const status = inventoryStatus(row);
+  const categoria = row.categoria_virtual || categorizarRepuesto(row) || "Sin categorizar";
   return `
     <article class="peticion-material-row">
       <div class="peticion-material-main">
         <strong>${escapeHtml(itemValue(row, "descripcion") || "Sin descripcion")}</strong>
         <span>Codigo: ${escapeHtml(itemValue(row, "codigo") || "-")} · Modelo: ${escapeHtml(itemValue(row, "modelo") || "-")} · Ubicacion: ${escapeHtml(itemValue(row, "ubicacion") || "-")}</span>
+        <span class="peticion-category-inline">Categoria: ${escapeHtml(categoria)}</span>
       </div>
       <div class="peticion-material-stock">
         <span>Stock</span>
@@ -3176,6 +3441,7 @@ function agregarMaterialPeticion(id) {
       codigo: itemValue(item, "codigo"),
       descripcion: itemValue(item, "descripcion"),
       unidad: itemValue(item, "unidad"),
+      categoria: item.categoria_virtual || categorizarRepuesto(item) || "Sin categorizar",
       stock,
       cantidad,
     });
@@ -3187,7 +3453,11 @@ function renderPeticionCartRows() {
   if (!state.peticionCart.length) return '<p class="empty-state">Agregue materiales a la peticion.</p>';
   return state.peticionCart.map((row) => `
     <div class="cart-row-v46">
-      <div><strong>${escapeHtml(row.descripcion || row.codigo)}</strong><span>${escapeHtml(row.codigo)} · ${escapeHtml(row.unidad)}</span></div>
+      <div>
+        <strong>${escapeHtml(row.descripcion || row.codigo)}</strong>
+        <span>${escapeHtml(row.codigo)} · ${escapeHtml(row.unidad)}</span>
+        <span class="cart-category-v74">Categoria: ${escapeHtml(row.categoria || "Sin categorizar")}</span>
+      </div>
       <input type="number" min="1" max="${escapeHtml(row.stock)}" value="${escapeHtml(row.cantidad)}" onchange="actualizarCantidadCarrito('${escapeJs(row.id)}', this.value)">
       <button class="danger" type="button" onclick="eliminarMaterialCarrito('${escapeJs(row.id)}')">🗑</button>
     </div>
@@ -3727,11 +3997,14 @@ function ensureAlmacenCategoryFilter(counts) {
   filter.innerHTML = `
     <div class="almacen-category-quick-grid">
       ${categoriasRepuestos().map((cat) => `
-        <button type="button" class="almacen-category-chip ${state.almacenCategoria === cat.id ? "active" : ""}" onclick="seleccionarCategoriaAlmacen('${escapeJs(cat.id)}')">
-          <span class="category-image" style="background-image:url('${escapeHtml(cat.imagen)}')"><i>${escapeHtml(cat.icono)}</i></span>
-          <strong>${escapeHtml(cat.nombre)}</strong>
-          <small>${(counts.get(cat.id) || 0).toLocaleString("es-PE")}</small>
-        </button>
+        <div class="almacen-category-chip-wrap">
+          <button type="button" class="almacen-category-chip ${state.almacenCategoria === cat.id ? "active" : ""}" onclick="seleccionarCategoriaAlmacen('${escapeJs(cat.id)}')">
+            <span class="category-image" style="${cat.imagen ? `background-image:url('${escapeHtml(cat.imagen)}')` : ""}"><i>${escapeHtml(cat.icono)}</i></span>
+            <strong>${escapeHtml(cat.nombre)}</strong>
+            <small>${(counts.get(cat.id) || 0).toLocaleString("es-PE")}</small>
+          </button>
+          ${cat.custom ? `<button type="button" class="category-delete-mini" title="Eliminar categoria" onclick="eliminarCategoriaPersonalizada('${escapeJs(cat.id)}')">Eliminar</button>` : ""}
+        </div>
       `).join("")}
     </div>
     <label>Categoria
@@ -3813,12 +4086,13 @@ function abrirCategorizarRepuesto(id) {
         <label class="span-full">Categoria
           <select name="categoria" required>
             ${categoriasRepuestos().filter((cat) => cat.id !== "todas").map((cat) => `
-              <option value="${escapeHtml(cat.id)}" ${cat.id === row.categoria_id ? "selected" : ""}>${escapeHtml(cat.nombre)}</option>
+              <option value="${escapeHtml(cat.id)}" ${cat.id === row.categoria_id ? "selected" : ""}>${escapeHtml(cat.nombre)}${cat.custom ? " (personalizada)" : ""}</option>
             `).join("")}
           </select>
         </label>
         <div class="form-actions span-full category-modal-actions">
-          <button class="secondary" type="button" onclick="crearCategoriaDesdeModal()">+ Agregar nueva categoria</button>
+          <button class="secondary" type="button" onclick="crearCategoriaDesdeModal()">+ Nueva categoria</button>
+          <button class="danger" type="button" onclick="eliminarCategoriaSeleccionadaModal()">Eliminar categoria</button>
         </div>
       </form>
     `,
@@ -3835,14 +4109,53 @@ function abrirCategorizarRepuesto(id) {
   });
 }
 
+async function eliminarCategoriaPersonalizada(id) {
+  const cat = categoriaById(id);
+  if (!isCustomCategoria(id)) return toast("Solo se pueden eliminar categorias nuevas", "warning");
+  const ok = await pedirConfirmacion(
+    "Eliminar categoria",
+    `<p>Se eliminara <strong>${escapeHtml(cat.nombre)}</strong>. Los repuestos asignados volveran a Sin categorizar.</p>`,
+    "Eliminar"
+  );
+  if (!ok) return;
+  deleteCustomCategoria(id);
+  renderAlmacen();
+  if (state.currentView === "peticion") renderPeticiones();
+  if (state.currentView === "pedidosAceptados") renderPedidosAceptados();
+}
+
+function refrescarSelectCategoriaModal(selectedId = "") {
+  const select = $("categorizarRepuestoForm")?.elements?.categoria;
+  if (!select) return;
+  select.innerHTML = categoriasRepuestos().filter((cat) => cat.id !== "todas").map((cat) => `
+    <option value="${escapeHtml(cat.id)}" ${cat.id === selectedId ? "selected" : ""}>${escapeHtml(cat.nombre)}${cat.custom ? " (personalizada)" : ""}</option>
+  `).join("");
+  if (selectedId) select.value = selectedId;
+}
+
 async function crearCategoriaDesdeModal() {
   const id = await abrirNuevaCategoria();
+  if (!id) return;
+  refrescarSelectCategoriaModal(id);
+}
+
+async function eliminarCategoriaSeleccionadaModal() {
   const select = $("categorizarRepuestoForm")?.elements?.categoria;
-  if (!id || !select) return;
-  select.innerHTML = categoriasRepuestos().filter((cat) => cat.id !== "todas").map((cat) => `
-    <option value="${escapeHtml(cat.id)}" ${cat.id === id ? "selected" : ""}>${escapeHtml(cat.nombre)}</option>
-  `).join("");
-  select.value = id;
+  const id = select?.value || "";
+  if (!id) return;
+  const cat = categoriaById(id);
+  if (!isCustomCategoria(id)) return toast("Solo se pueden eliminar categorias nuevas creadas por usted", "warning");
+  const ok = await pedirConfirmacion(
+    "Eliminar categoria",
+    `<p>Se eliminara la categoria <strong>${escapeHtml(cat.nombre)}</strong>. Los repuestos asignados volveran a Sin categorizar.</p>`,
+    "Eliminar"
+  );
+  if (!ok) return;
+  deleteCustomCategoria(id);
+  refrescarSelectCategoriaModal("sin_categorizar");
+  renderAlmacen();
+  if (state.currentView === "peticion") renderPeticiones();
+  if (state.currentView === "pedidosAceptados") renderPedidosAceptados();
 }
 
 function abrirConfigInventario(id) {
@@ -3953,6 +4266,7 @@ function renderIngresoItem() {
         </div>
       </div>
       <input type="hidden" name="tabla" value="${escapeHtml(selected?._tabla || "repuestos")}">
+      <input type="hidden" name="sede" value="${escapeHtml(effectiveSedeScope() || "")}">
       <label>Codigo<input name="codigo" required readonly value="${escapeHtml(selected ? itemValue(selected, "codigo") : "")}" placeholder="Seleccione un producto"></label>
       <label>Descripcion<input name="descripcion" required readonly value="${escapeHtml(selected ? itemValue(selected, "descripcion") : "")}"></label>
       <label>Unidad<input name="unidad" readonly value="${escapeHtml(selected ? itemValue(selected, "unidad") : "")}"></label>
@@ -3964,14 +4278,11 @@ function renderIngresoItem() {
         </select>
       </label>
       <label>Codigo nuevo<input name="codigo" required placeholder="Codigo nuevo del item"></label>
+      <input type="hidden" name="sede" value="${escapeHtml(effectiveSedeScope() || "")}">
       <label>Descripcion<input name="descripcion" required placeholder="Descripcion del item"></label>
       <label>Unidad<input name="unidad" placeholder="UND, KG, LT..."></label>
-      <label>Tipo<input name="tipo" placeholder="Tipo"></label>
-      <label>Categoria<input name="categoria" placeholder="Categoria"></label>
-      <label>Area<input name="area" placeholder="Area"></label>
       <label>Modelo<input name="modelo" placeholder="Modelo"></label>
       <label>Ubicacion<input name="ubicacion" placeholder="Ubicacion en almacen"></label>
-      <label>Proveedor<input name="proveedor" placeholder="Proveedor"></label>
       <label>Stock minimo<input name="stock_minimo" type="number" min="0" step="0.01"></label>
       <label>Stock maximo<input name="stock_maximo" type="number" min="0" step="0.01"></label>
     `}
@@ -4047,6 +4358,7 @@ function renderHistorialPeticiones() {
   });
   const rows = [...merged.values()]
     .filter((row) => !isDeletedRow(row))
+    .filter(peticionMatchesSedeScope)
     .slice()
     .sort((a, b) => String(b.creado_en || b.fecha || "").localeCompare(String(a.creado_en || a.fecha || "")));
   if (!rows.length) {
@@ -4088,6 +4400,7 @@ function peticionesAceptadasRows() {
   });
   return [...merged.values()]
     .filter((row) => !isDeletedRow(row))
+    .filter(peticionMatchesSedeScope)
     .filter((row) => normalizeText(row.estado || "") === "aceptada")
     .sort((a, b) => String(b.creado_en || b.fecha || "").localeCompare(String(a.creado_en || a.fecha || "")));
 }
@@ -4170,6 +4483,17 @@ async function renderPedidosAceptados() {
   asegurarIframePedidosAceptados3D();
 }
 
+function peticionMatchesSedeScope(row) {
+  const sede = effectiveSedeScope();
+  if (!sede) return true;
+  if (matchesSedeGlobal(row)) return true;
+  const inv = inventoryMatchForPeticionItem({
+    item_codigo: row?.item_codigo || row?.codigo || "",
+    item_nombre: row?.item_nombre || row?.descripcion || "",
+  });
+  return inv ? matchesSedeGlobal(inv) : false;
+}
+
 async function abrirNuevaCategoria() {
   const ok = await pedirConfirmacion(
     "Nueva categoria",
@@ -4214,7 +4538,7 @@ function asegurarIframePedidosAceptados3D() {
   frame.style.display = "block";
   frame.style.border = "0";
   frame.style.background = "#dbeafe";
-  if (!frame.src || !frame.src.includes("warehouse3d_v73/warehouse3d.html")) {
+  if (!frame.src || !frame.src.includes("warehouse3d_v85/warehouse3d.html")) {
     frame.src = `${base}&t=${Date.now()}`;
   }
   setTimeout(() => {
@@ -4923,15 +5247,20 @@ async function cerrarOtDirecta(numero) {
 }
 
 function renderConfig(tab) {
+  if (tab === "personal") tab = "usuarios";
   ensureConfigAccessTab();
   state.currentConfigTab = tab;
+  removePersonalConfigTab();
   document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  if (!isAdminUser()) {
+    $("configContent").innerHTML = `<p class="empty-state">Solo el administrador puede modificar configuracion y maestros. Su informacion operativa ya esta filtrada por sede.</p>`;
+    return;
+  }
   if (tab === "accesos") return renderAccesosConfig();
   if (tab === "resetSistema") return renderResetSistemaConfig();
   if (tab === "usuarios") return renderUsuarios();
-  if (tab === "personal") return renderPersonalConfig();
   if (tab === "repuestos" || tab === "productos") return renderInventarioConfig(tab);
-  const rows = state.catalogos[tab] || [];
+  const rows = rowsBySede(state.catalogos[tab] || []);
   const columnsByTab = {
     equipos: ["estado", "ubicacion", "proceso", "sistema", "equipo", "sub_equipo", "codigo", "tipo_equipo", "sede"],
     repuestos: ["codigo", "nombre", "unidad", "stock", "estado"],
@@ -4963,11 +5292,20 @@ function renderConfig(tab) {
 }
 
 function renderInventarioConfig(tab) {
-  const rows = state.catalogos[tab] || [];
+  const rows = rowsBySede(state.catalogos[tab] || []);
+  const columns = [
+    { key: "sede", label: "SEDE", render: (row) => escapeHtml(itemValue(row, "sede") || row.sede || "") },
+    { key: "codigo", label: "CODIGO", render: (row) => escapeHtml(itemValue(row, "codigo")) },
+    { key: "descripcion", label: "DESCRIPCION", render: (row) => escapeHtml(itemValue(row, "descripcion")) },
+    { key: "modelo", label: "MODELO", render: (row) => escapeHtml(itemValue(row, "modelo")) },
+    { key: "cantidad", label: "CANTIDAD", render: (row) => escapeHtml(itemValue(row, "cantidad")) },
+    { key: "ubicacion", label: "UBICACION", render: (row) => escapeHtml(itemValue(row, "ubicacion")) },
+    { key: "unidad", label: "UNIDAD", render: (row) => escapeHtml(itemValue(row, "unidad")) },
+  ];
   $("configContent").innerHTML = `
     <div class="config-card-intro">
       <h3>${tab === "productos" ? "DB Productos" : "DB Repuestos / Inventario"}</h3>
-      <p>Maestro usado para almacen y peticiones. Se respetan las columnas del Excel: CODIGO, TIPO, CATEGORIA, AREA, DESCRIPCION, MODELO, CANTIDAD, UBICACION, PROOVEDOR y UNIDAD.</p>
+      <p>Maestro usado para almacen y peticiones. Se respeta el nuevo Excel: SEDE, CODIGO, DESCRIPCION, MODELO, CANTIDAD, UBICACION y UNIDAD. La categoria es global/virtual y se gestiona desde Almacen.</p>
     </div>
     <div class="import-box">
       <label>Subir Excel para ${tab}<input type="file" id="excelFile" accept=".xlsx,.xls"></label>
@@ -4975,18 +5313,7 @@ function renderInventarioConfig(tab) {
     </div>
     <div class="table-wrap">${renderTable(
       rows,
-      [
-        { key: "codigo", label: "CODIGO", render: (row) => escapeHtml(itemValue(row, "codigo")) },
-        { key: "tipo", label: "TIPO", render: (row) => escapeHtml(itemValue(row, "tipo")) },
-        { key: "categoria", label: "CATEGORIA", render: (row) => escapeHtml(itemValue(row, "categoria")) },
-        { key: "area", label: "AREA", render: (row) => escapeHtml(itemValue(row, "area")) },
-        { key: "descripcion", label: "DESCRIPCION", render: (row) => escapeHtml(itemValue(row, "descripcion")) },
-        { key: "modelo", label: "MODELO", render: (row) => escapeHtml(itemValue(row, "modelo")) },
-        { key: "cantidad", label: "CANTIDAD", render: (row) => escapeHtml(itemValue(row, "cantidad")) },
-        { key: "ubicacion", label: "UBICACION", render: (row) => escapeHtml(itemValue(row, "ubicacion")) },
-        { key: "proveedor", label: "PROOVEDOR", render: (row) => escapeHtml(itemValue(row, "proveedor")) },
-        { key: "unidad", label: "UNIDAD", render: (row) => escapeHtml(itemValue(row, "unidad")) },
-      ],
+      columns,
       null
     )}</div>
   `;
@@ -4995,7 +5322,7 @@ function renderInventarioConfig(tab) {
 function renderPersonalConfig() {
   const filters = state.configFilters.personal || {};
   const q = state.configSearch.toLowerCase();
-  const rows = (state.catalogos.personal || []).filter((p) => {
+  const rows = rowsBySede(state.usuariosPersonal || state.catalogos.personal || []).filter((p) => {
     const matchesQ = !q || ["nombre", "sede", "area", "cargo"].some((key) => String(personalValue(p, key)).toLowerCase().includes(q));
     const matchesSede = !filters.sede || personalValue(p, "sede") === filters.sede;
     const matchesArea = !filters.area || personalValue(p, "area") === filters.area;
@@ -5004,12 +5331,12 @@ function renderPersonalConfig() {
   });
   $("configContent").innerHTML = `
     <div class="config-card-intro">
-      <h3>DB Personal</h3>
-      <p>Importe y consulte el maestro oficial de personal. CARGO = Tecnico aparece como responsable disponible para OT; CARGO/rol Jefe puede crear avisos y calificar OT.</p>
+      <h3>Personal desde DB Usuarios</h3>
+      <p>La app usa DB Usuarios como maestro de personal. CARGO o ROL = Tecnico aparece como responsable disponible para OT; Jefe/Supervisor/Admin puede crear avisos y calificar OT.</p>
     </div>
-    <div class="import-box">
-      <label>Subir Excel para personal<input type="file" id="excelFile" accept=".xlsx,.xls"></label>
-      <button class="primary" onclick="importarExcel('personal')">📥 Importar</button>
+    <div class="import-box personal-users-note">
+      <p class="muted">Para agregar, modificar, eliminar o importar personal use la pestaña <strong>Usuarios</strong>. Este apartado ya no se usa como base independiente.</p>
+      <button class="primary" type="button" onclick="renderConfig('usuarios')">Abrir DB Usuarios</button>
     </div>
     <div class="config-toolbar">
       <label>Buscar personal<input id="personalSearch" type="search" placeholder="Buscar por nombre, sede, area o cargo..." value="${escapeHtml(state.configSearch)}"></label>
@@ -5030,9 +5357,10 @@ function renderPersonalConfig() {
       )}
     </div>
   `;
-  fillSelect($("personalFilterSede"), [...new Set(state.catalogos.personal.map((p) => personalValue(p, "sede")).filter(Boolean))].sort(), "Todas", filters.sede || "");
-  fillSelect($("personalFilterArea"), [...new Set(state.catalogos.personal.map((p) => personalValue(p, "area")).filter(Boolean))].sort(), "Todas", filters.area || "");
-  fillSelect($("personalFilterCargo"), [...new Set(state.catalogos.personal.map((p) => personalValue(p, "cargo")).filter(Boolean))].sort(), "Todos", filters.cargo || "");
+  const personalScope = rowsBySede(state.usuariosPersonal || state.catalogos.personal || []);
+  fillSelect($("personalFilterSede"), [...new Set(personalScope.map((p) => personalValue(p, "sede")).filter(Boolean))].sort(), "Todas", filters.sede || "");
+  fillSelect($("personalFilterArea"), [...new Set(personalScope.map((p) => personalValue(p, "area")).filter(Boolean))].sort(), "Todas", filters.area || "");
+  fillSelect($("personalFilterCargo"), [...new Set(personalScope.map((p) => personalValue(p, "cargo")).filter(Boolean))].sort(), "Todos", filters.cargo || "");
   $("personalSearch").addEventListener("input", (event) => {
     state.configSearch = event.target.value;
     renderPersonalConfig();
@@ -5128,7 +5456,7 @@ async function importarExcel(tabla) {
 }
 
 async function renderUsuarios() {
-  if (state.user.role !== "admin") {
+  if (!isAdminUser()) {
     $("configContent").innerHTML = "<p>Solo el administrador puede configurar usuarios.</p>";
     return;
   }
@@ -5149,6 +5477,7 @@ async function renderUsuarios() {
         <label>Nombre<input name="full_name" required></label>
         <label>Apellidos<input name="apellidos"></label>
         <label>DNI / Codigo<input name="dni_codigo"></label>
+        <label>Sede<select name="sede" required>${sedesGlobales().map((sede) => `<option value="${escapeHtml(sede)}">${escapeHtml(sede)}</option>`).join("")}</select></label>
         <label>Area<input name="area"></label>
         <label>Cargo<input name="cargo"></label>
         <label>Clave<input name="password" type="password" required></label>
@@ -5165,12 +5494,13 @@ async function renderUsuarios() {
             { key: "full_name", label: "Nombre" },
             { key: "apellidos", label: "Apellidos" },
             { key: "dni_codigo", label: "DNI / Codigo" },
+            { key: "sede", label: "Sede" },
             { key: "area", label: "Area" },
             { key: "cargo", label: "Cargo" },
             { key: "role", label: "Rol" },
             { key: "active", label: "Estado", render: (row) => badge(row.active ? "ACTIVO" : "INACTIVO") },
           ],
-          (row) => `<button onclick="resetClave('${row.username}')">🔑 Cambiar clave</button><button class="danger" onclick="eliminarUsuario('${row.username}')">🗑 Eliminar</button>`
+          (row) => `<button onclick="editarUsuario('${escapeJs(row.username)}')">✎ Modificar</button><button onclick="resetClave('${escapeJs(row.username)}')">🔑 Cambiar clave</button><button class="danger" onclick="eliminarUsuario('${escapeJs(row.username)}')">🗑 Eliminar</button>`
         )}
       </div>
     `;
@@ -5196,6 +5526,54 @@ async function crearUsuario(event) {
     await api("/api/users", { method: "POST", body: JSON.stringify(data) });
     confirmar("Usuario creado", "El usuario ya puede iniciar sesion.");
     toast("Usuario creado correctamente", "success");
+    renderUsuarios();
+  } catch (err) {
+    toast(err.message, "error");
+  }
+}
+
+async function editarUsuario(username) {
+  if (!isAdminUser()) return;
+  let users = [];
+  try {
+    users = await api("/api/users");
+  } catch (err) {
+    return toast(err.message, "error");
+  }
+  const row = users.find((user) => user.username === username);
+  if (!row) return toast("Usuario no encontrado", "error");
+  const ok = await pedirConfirmacion(
+    "Modificar usuario",
+    `
+      <form id="editarUsuarioForm" class="form-grid">
+        <label>Usuario<input value="${escapeHtml(row.username || "")}" readonly></label>
+        <label>Nombre<input name="full_name" value="${escapeHtml(row.full_name || "")}"></label>
+        <label>Apellidos<input name="apellidos" value="${escapeHtml(row.apellidos || "")}"></label>
+        <label>DNI / Codigo<input name="dni_codigo" value="${escapeHtml(row.dni_codigo || "")}"></label>
+        <label>Sede<select name="sede">${sedesGlobales().map((sede) => `<option value="${escapeHtml(sede)}" ${sameText(sede, row.sede) ? "selected" : ""}>${escapeHtml(sede)}</option>`).join("")}</select></label>
+        <label>Area<input name="area" value="${escapeHtml(row.area || "")}"></label>
+        <label>Cargo<input name="cargo" value="${escapeHtml(row.cargo || "")}"></label>
+        <label>Rol<select name="role">
+          <option value="admin" ${row.role === "admin" ? "selected" : ""}>ADMINISTRADOR</option>
+          <option value="supervisor" ${row.role === "supervisor" ? "selected" : ""}>SUPERVISOR</option>
+          <option value="jefe" ${row.role === "jefe" ? "selected" : ""}>JEFE DE AREA</option>
+          <option value="tecnico" ${row.role === "tecnico" ? "selected" : ""}>MANTENIMIENTO / TECNICO</option>
+          <option value="almacen" ${row.role === "almacen" ? "selected" : ""}>ALMACEN</option>
+        </select></label>
+        <label>Estado<select name="active">
+          <option value="true" ${row.active ? "selected" : ""}>ACTIVO</option>
+          <option value="false" ${!row.active ? "selected" : ""}>INACTIVO</option>
+        </select></label>
+      </form>
+    `,
+    "Guardar"
+  );
+  if (!ok) return;
+  const data = formData($("editarUsuarioForm"));
+  data.active = data.active === "true";
+  try {
+    await api(`/api/users/${encodeURIComponent(username)}`, { method: "PATCH", body: JSON.stringify(data) });
+    toast("Usuario actualizado correctamente", "success");
     renderUsuarios();
   } catch (err) {
     toast(err.message, "error");
@@ -5265,7 +5643,7 @@ async function exportarPdfMasivo() {
 }
 
 async function renderAccesosConfig() {
-  if (String(state.user?.role || "").toLowerCase() !== "admin") {
+  if (!isAdminUser()) {
     $("configContent").innerHTML = "<p>Solo el administrador puede configurar accesos.</p>";
     return;
   }
@@ -5281,7 +5659,7 @@ async function renderAccesosConfig() {
   $("configContent").innerHTML = `
     <div class="config-card-intro">
       <h3>Accesos por usuario</h3>
-      <p>El administrador define qué ventanas puede abrir cada usuario creado. Si no hay casillas guardadas para un usuario, se conserva la regla por cargo de DB Personal.</p>
+      <p>El administrador define qué ventanas puede abrir cada usuario creado. Si no hay casillas guardadas para un usuario, se conserva la regla por cargo/rol de DB Usuarios.</p>
     </div>
     <div class="form-actions">
       <button class="primary" type="button" id="saveAccessMatrix">✓ Guardar accesos</button>
@@ -5377,7 +5755,7 @@ function renderResetSistemaConfig() {
   $("configContent").innerHTML = `
     <div class="config-card-intro">
       <h3>Reset sistema</h3>
-      <p>Deja en cero los datos operativos: OT, avisos, atenciones, calificaciones, peticiones, historial y movimientos Kardex. No borra usuarios, DB Personal, DB Equipos, productos ni repuestos.</p>
+      <p>Deja en cero los datos operativos: OT, avisos, atenciones, calificaciones, peticiones, historial y movimientos Kardex. No borra usuarios, DB Equipos, productos ni repuestos.</p>
     </div>
     <div class="subpanel">
       <label>Confirmacion obligatoria
@@ -5455,6 +5833,8 @@ function saveVoiceAssistantConfig(showToast = true) {
 
 function findPersonalForUser(user) {
   const candidates = [user.username, user.full_name, user.dni_codigo].map(compactText).filter(Boolean);
+  const directUser = (state.usuariosPersonal || []).find((p) => compactText(p.username) && candidates.includes(compactText(p.username)));
+  if (directUser) return directUser;
   return (state.catalogos.personal || []).find((p) => {
     const values = [personalValue(p, "nombre"), p.codigo, p.username, p.usuario, p.dni_codigo, p.dni].map(compactText).filter(Boolean);
     return values.some((value) => candidates.includes(value));
@@ -5952,8 +6332,11 @@ function attachEvents() {
     $("loginMsg").textContent = "";
     try {
       const result = await api("/api/login", { method: "POST", body: JSON.stringify({ username: $("loginUser").value, password: $("loginPass").value }) });
+      clearSessionScopedState();
       state.token = result.token;
       state.user = result.user;
+      const me = await apiOptional("/api/me", result.user);
+      if (me) state.user = me;
       localStorage.setItem("mantto_token", state.token);
       localStorage.setItem("mantto_user", JSON.stringify(state.user));
       showApp();
@@ -5966,6 +6349,7 @@ function attachEvents() {
   $("logoutBtn").addEventListener("click", () => {
     localStorage.removeItem("mantto_token");
     localStorage.removeItem("mantto_user");
+    clearSessionScopedState();
     state.token = "";
     state.user = null;
     showLogin();
@@ -5986,13 +6370,14 @@ function attachEvents() {
   $("avisoForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!esJefe()) return toast("Solo personal JEFE puede crear avisos", "error");
+    setFormValue(event.target, "sede", event.target.elements.sede?.value || effectiveSedeScope() || "");
     if (!validateRequiredForm(event.target)) return;
     const data = formData(event.target);
     const avisoMode = state.equipmentSelectors.aviso?.mode || "filter";
 
     if (avisoMode === "filter") {
-      if (!data.sede) return toast("Seleccione una sede", "warning");
-      if (!data.ubicacion) return toast("Seleccione una ubicacion", "warning");
+      data.sede = data.sede || effectiveSedeScope() || "";
+      if (!data.sede) return toast("El usuario no tiene sede asignada", "warning");
       if (!data.proceso) return toast("Seleccione un proceso", "warning");
       if (!data.sistema) return toast("Seleccione un sistema", "warning");
       if (!data.descripcion) return toast("Ingrese una descripcion", "warning");
@@ -6010,6 +6395,7 @@ function attachEvents() {
     if (!ok) return;
     try {
       const payload = new FormData(event.target);
+      payload.set("sede", data.sede || effectiveSedeScope() || "");
       payload.delete("referencia");
       const result = await api("/api/avisos", { method: "POST", body: payload });
       confirmar("AVISO GENERADO CORRECTAMENTE", `Codigo de aviso: ${result.numero} · Estado: ABIERTO`);
@@ -6029,12 +6415,13 @@ await refreshAfterMutation({ home: true });
 
   $("otForm").addEventListener("submit", async (event) => {
     event.preventDefault();
+    setFormValue(event.target, "sede", event.target.elements.sede?.value || effectiveSedeScope() || "");
     if (!validateRequiredForm(event.target)) return;
     const data = normalizeOtPayload(formData(event.target));
     const otMode = state.equipmentSelectors.ot?.mode || "filter";
     
-    if (!data.sede) return toast("Complete sede", "warning");
-    if (!data.ubicacion) return toast("Complete ubicacion", "warning");
+    data.sede = data.sede || effectiveSedeScope() || "";
+    if (!data.sede) return toast("El usuario no tiene sede asignada", "warning");
     if (!data.proceso) return toast("Complete proceso", "warning");
     if (!data.sistema) return toast("Complete sistema", "warning");
     if (otMode === "filter") {
@@ -6231,9 +6618,25 @@ await refreshAfterMutation({ home: true });
 attachWarehouse3dBridge();
 attachEvents();
 bindRequiredIndicators();
-if (state.token && state.user) {
+async function bootManttoSession() {
+  if (!state.token || !state.user) {
+    showLogin();
+    return;
+  }
+  const me = await apiOptional("/api/me", null);
+  if (!me) {
+    localStorage.removeItem("mantto_token");
+    localStorage.removeItem("mantto_user");
+    clearSessionScopedState();
+    state.token = "";
+    state.user = null;
+    showLogin();
+    return;
+  }
+  state.user = me;
+  localStorage.setItem("mantto_user", JSON.stringify(state.user));
   showApp();
-} else {
-  showLogin();
 }
+
+bootManttoSession();
 
