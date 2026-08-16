@@ -299,6 +299,108 @@ function formData(form) {
   return Object.fromEntries(new FormData(form).entries());
 }
 
+const MANTTO_DRAFT_FORM_IDS = new Set([
+  "avisoForm",
+  "otForm",
+  "peticionForm",
+  "avisoOtForm",
+  "atenderOtForm",
+  "atenderAvisoForm",
+  "atenderOtForm",
+  "ingresoItemForm",
+  "personalForm",
+  "userForm",
+  "editarUsuarioForm",
+  "ratingForm",
+  "categorizarRepuestoForm",
+  "inventoryLimitForm",
+  "nuevaCategoriaForm",
+]);
+
+function closestDraftForm(node) {
+  return node?.closest?.("form");
+}
+
+function markFormDirty(form) {
+  if (!form || !MANTTO_DRAFT_FORM_IDS.has(form.id)) return;
+  form.dataset.manttoDirty = "1";
+}
+
+function markFormClean(form) {
+  if (!form) return;
+  delete form.dataset.manttoDirty;
+}
+
+function markViewFormsClean(view = state.currentView) {
+  const root = view === "home" ? $("homeScreen") : $(view);
+  root?.querySelectorAll("form").forEach(markFormClean);
+}
+
+function formHasFilledUserData(form) {
+  if (!form || form.dataset.manttoDirty !== "1") return false;
+  return [...form.elements].some((field) => {
+    if (!field.name || field.disabled) return false;
+    if (["button", "submit", "reset", "hidden"].includes(field.type)) return false;
+    if (field.type === "file") return field.files && field.files.length > 0;
+    if (["checkbox", "radio"].includes(field.type)) return field.checked;
+    return String(field.value || "").trim() !== "";
+  });
+}
+
+function viewHasUnsavedWork(view = state.currentView) {
+  if (view === "peticion" && state.peticionCart.length) return true;
+  if (view === "ingresoItem" && state.ingresoItemSelected) return true;
+  const root = view === "home" ? $("homeScreen") : $(view);
+  if (!root) return false;
+  return [...root.querySelectorAll("form")].some(formHasFilledUserData);
+}
+
+function clearViewDraft(view = state.currentView) {
+  const root = view === "home" ? $("homeScreen") : $(view);
+  root?.querySelectorAll("form").forEach((form) => {
+    form.reset();
+    markFormClean(form);
+  });
+  if (view === "aviso") {
+    state.equipmentSelectors.aviso = { mode: "filter", filters: {}, code: "", selected: null };
+    if ($("avisoCreado") && state.user) $("avisoCreado").value = state.user.username || "";
+    if ($("avisoImagenesInfo")) $("avisoImagenesInfo").textContent = "Sin imagen seleccionada.";
+    renderAvisoResumenSeleccion(null);
+  }
+  if (view === "ot") {
+    state.equipmentSelectors.ot = { mode: "filter", filters: {}, code: "", selected: null };
+  }
+  if (view === "peticion") {
+    state.peticionCart = [];
+    state.peticionCriticidad = "";
+    state.peticionCategoriaAbierta = "";
+  }
+  if (view === "ingresoItem") {
+    state.ingresoItemSelected = null;
+    state.ingresoItemSearch = "";
+  }
+  if (view === "atenderAviso") {
+    state.selectedAtenderAviso = null;
+    $("atenderAvisoBox")?.classList.add("hidden");
+  }
+  if (view === "cerrarOt") {
+    state.selectedOt = null;
+    $("atenderOtBox")?.classList.add("hidden");
+  }
+  if (view === "calificarOt") {
+    state.selectedRatingOt = null;
+    $("serviceRatingModal")?.classList.add("hidden");
+  }
+}
+
+function confirmLeaveCurrentView(nextView) {
+  if (nextView === state.currentView) return true;
+  if (!viewHasUnsavedWork(state.currentView)) return true;
+  const ok = window.confirm("Tiene datos llenados sin guardar. Si sale de esta pantalla, se limpiaran esos datos. Desea salir?");
+  if (ok) clearViewDraft(state.currentView);
+  return ok;
+}
+
 function removeReferenceFields() {
   ["avisoForm", "otForm", "avisoOtForm", "atenderAvisoForm"].forEach((formId) => {
     const form = $(formId);
@@ -523,12 +625,14 @@ function setView(id) {
   if (id === "cerrarAvisos") id = "atenderAviso";
   const validViews = ["home", "aviso", "ot", "atenderAviso", "peticion", "almacen", "ingresoItem", "kardex", "historialPeticiones", "pedidosAceptados", "warehouse3d", "cerrarOt", "calificarOt", "historialCalificaciones", "historialOt", "cerrarAvisos", "config", "asistenteCielo"];
   const nextView = validViews.includes(id) ? id : "home";
+  if (!confirmLeaveCurrentView(nextView)) return;
   if (!canAccessView(nextView)) {
     toast("Esta opcion esta disponible solo para personal JEFE", "error");
     return;
   }
   state.currentView = nextView;
   $("appView").dataset.currentView = nextView;
+  renderFiltroSedeGlobal();
 
   const screens = [$("homeScreen"), ...document.querySelectorAll(".panel")].filter(Boolean);
   screens.forEach((screen) => {
@@ -579,6 +683,7 @@ function setView(id) {
   if (nextView === "historialOt") renderHistorialOt();
   if (nextView === "config") renderConfig(state.currentConfigTab || "equipos");
   if (nextView === "asistenteCielo") renderVoiceAssistant();
+  markViewFormsClean(nextView);
   document.body.classList.remove("nav-open");
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -1271,8 +1376,10 @@ async function loadAll(options = {}) {
     const sedesInfo = await apiOptional("/api/sedes", { sedes: [], current: userSedeScope(), is_admin: isAdminUser() });
     state.sedesDisponibles = Array.isArray(sedesInfo?.sedes) ? sedesInfo.sedes : [];
     if (isAdminUser()) {
-      const saved = localStorage.getItem("mantto_filtro_sede_global") || "";
-      state.filtroSedeGlobal = state.sedesDisponibles.some((sede) => sameText(sede, saved)) ? saved : "";
+      const saved = localStorage.getItem("mantto_filtro_sede_global") || state.filtroSedeGlobal || "";
+      if (!saved) state.filtroSedeGlobal = "";
+      else if (!state.sedesDisponibles.length || state.sedesDisponibles.some((sede) => sameText(sede, saved))) state.filtroSedeGlobal = saved;
+      else state.filtroSedeGlobal = "";
     } else {
       state.filtroSedeGlobal = sedesInfo?.current || userSedeScope() || "";
     }
@@ -1312,7 +1419,8 @@ async function loadAll(options = {}) {
 }
 
 async function refreshAfterMutation(options = {}) {
-  await loadAll({ silent: true });
+  document.querySelectorAll("form").forEach(markFormClean);
+  await loadAll({ forceRender: true, silent: true });
   renderDashboard("app");
   if (options.home) setView("home");
 }
@@ -1341,6 +1449,7 @@ function renderSafeView() {
 }
 
 function renderSafePollingUpdates() {
+  renderFiltroSedeGlobal();
   if (isUserEditing()) return;
   if (state.currentView === "home") renderDashboard("app");
   if (state.currentView === "atenderItem") renderPeticiones();
@@ -1363,6 +1472,7 @@ function renderSafePollingUpdates() {
 function isUserEditing() {
   const active = document.activeElement;
   if (active && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName)) return true;
+  if (viewHasUnsavedWork(state.currentView)) return true;
   if (!$("actionConfirm")?.classList.contains("hidden")) return true;
   if (!$("serviceRatingModal")?.classList.contains("hidden")) return true;
   return false;
@@ -1379,7 +1489,7 @@ async function loadPublicDashboard() {
 
 function startAppPolling() {
   if (state.appTimer) return;
-  state.appTimer = setInterval(() => loadAll({ silent: true }), 3500);
+  state.appTimer = setInterval(() => loadAll({ silent: true }), 1500);
 }
 
 function stopAppPolling() {
@@ -6327,6 +6437,30 @@ function updateRatingAverage() {
 }
 
 function attachEvents() {
+  document.addEventListener("input", (event) => {
+    const form = closestDraftForm(event.target);
+    if (form) markFormDirty(form);
+  }, true);
+
+  document.addEventListener("change", (event) => {
+    const form = closestDraftForm(event.target);
+    if (form) markFormDirty(form);
+  }, true);
+
+  window.addEventListener("beforeunload", (event) => {
+    if (!viewHasUnsavedWork(state.currentView)) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.token) loadAll({ silent: true });
+  });
+
+  window.addEventListener("focus", () => {
+    if (state.token) loadAll({ silent: true });
+  });
+
   $("loginForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     $("loginMsg").textContent = "";
@@ -6347,6 +6481,7 @@ function attachEvents() {
   });
 
   $("logoutBtn").addEventListener("click", () => {
+    if (!confirmLeaveCurrentView("logout")) return;
     localStorage.removeItem("mantto_token");
     localStorage.removeItem("mantto_user");
     clearSessionScopedState();
