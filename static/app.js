@@ -26,6 +26,7 @@ const state = {
   almacenTipo: "",
   almacenCategoria: "todas",
   almacenStockFilter: "",
+  almacenBarcodeSelected: new Set(),
   peticionSearch: "",
   peticionCart: [],
   peticionCriticidad: "",
@@ -81,6 +82,7 @@ const MANTTO_TIPOS_INTERVENCION = [
 // Encabezados usados por DB _inventario / productos / repuestos.
 const MANTTO_ITEM_KEYS = {
   codigo: ["codigo", "código", "cod", "cod_item", "item_codigo"],
+  codigo_barras: ["codigo_barras", "código_barras", "codigobarras", "codigo barras", "barcode", "bar_code", "ean", "ean13"],
   tipo: ["tipo", "clase"],
   categoria: ["categoria", "categoría", "familia", "grupo"],
   sede: ["sede", "planta", "local", "centro", "sucursal"],
@@ -152,6 +154,24 @@ function categoriasRepuestos() {
     ...custom.sort((a, b) => a.nombre.localeCompare(b.nombre, "es")),
     MANTTO_CATEGORIAS_BASE_REPUESTOS[MANTTO_CATEGORIAS_BASE_REPUESTOS.length - 1],
   ];
+}
+
+function categoriaIconoVisual(icono, categoria = "") {
+  const raw = String(icono || "").trim();
+  if (raw && !/^[a-z_ -]{3,}$/i.test(raw)) return raw;
+  const text = normalizeText(`${categoria} ${raw}`);
+  if (text.includes("rodamiento") || text.includes("bearing") || text.includes("settings")) return "⚙";
+  if (text.includes("sensor")) return "◉";
+  if (text.includes("contactor") || text.includes("electrical")) return "▣";
+  if (text.includes("correa") || text.includes("sync")) return "▱";
+  if (text.includes("motor") || text.includes("precision")) return "◌";
+  if (text.includes("valvula") || text.includes("valve")) return "◇";
+  if (text.includes("proteccion") || text.includes("bolt")) return "⚡";
+  if (text.includes("rele") || text.includes("memory")) return "⌁";
+  if (text.includes("torniller") || text.includes("construction")) return "✚";
+  if (text.includes("otro") || text.includes("widget")) return "□";
+  if (text.includes("sin categorizar") || text.includes("help")) return "?";
+  return raw ? raw.slice(0, 2).toUpperCase() : "•";
 }
 
 function isCustomCategoria(id) {
@@ -592,6 +612,7 @@ function updateRoleUi() {
 
 function showApp() {
   injectManttoV38Styles();
+  injectManttoV92Styles();
   ensureManttoV46Ui();
   ensureVoiceAssistantUi();
   ensureConfigAccessTab();
@@ -607,6 +628,7 @@ function showApp() {
   loadAll({ forceRender: true });
   startAppPolling();
   setView("home");
+  decorateManttoVisualSystem();
   if (state.voice.enabled) setTimeout(startVoiceAssistant, 600);
 }
 
@@ -683,6 +705,7 @@ function setView(id) {
   if (nextView === "historialOt") renderHistorialOt();
   if (nextView === "config") renderConfig(state.currentConfigTab || "equipos");
   if (nextView === "asistenteCielo") renderVoiceAssistant();
+  decorateManttoVisualSystem();
   markViewFormsClean(nextView);
   document.body.classList.remove("nav-open");
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1446,6 +1469,7 @@ function renderSafeView() {
   renderHistorialCalificaciones();
   renderAlmacen();
   if (state.currentView === "config") renderConfig(state.currentConfigTab);
+  decorateManttoVisualSystem();
 }
 
 function renderSafePollingUpdates() {
@@ -1467,6 +1491,7 @@ function renderSafePollingUpdates() {
   if (state.currentView === "historialOt") renderHistorialOt();
   if (state.currentView === "almacen") renderAlmacen();
   if (state.currentView === "config" && !["usuarios", "accesos"].includes(state.currentConfigTab)) renderConfig(state.currentConfigTab);
+  decorateManttoVisualSystem();
 }
 
 function isUserEditing() {
@@ -2800,6 +2825,98 @@ function injectManttoV38Styles() {
   document.head.appendChild(style);
 }
 
+function injectManttoV92Styles() {
+  if ($("manttoV92Design")) return;
+  const link = document.createElement("link");
+  link.id = "manttoV92Design";
+  link.rel = "stylesheet";
+  link.href = "/static/mantto_v95_barcode_ui.css?v=95";
+  document.head.appendChild(link);
+}
+
+function manttoSvgIcon(name) {
+  const icons = {
+    home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/>',
+    aviso: '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 2.6 17.2A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0Z"/>',
+    ot: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="m9 15 2 2 4-5"/>',
+    atenderAviso: '<path d="M14.7 6.3a4 4 0 0 0-5.6 5.6L3 18v3h3l6.1-6.1a4 4 0 0 0 5.6-5.6l-2.4 2.4-2.8-2.8Z"/>',
+    peticion: '<path d="M6 2h12l3 7-9 13L3 9Z"/><path d="M3 9h18"/><path d="m9 9 3 13 3-13"/>',
+    almacen: '<path d="M3 21V8l9-5 9 5v13"/><path d="M7 21v-9h10v9"/><path d="M7 15h10"/><path d="M12 12v9"/>',
+    ingresoItem: '<path d="M12 5v14"/><path d="M5 12h14"/><path d="M4 20h16"/>',
+    kardex: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+    historialPeticiones: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/><path d="M12 7v5l3 2"/>',
+    pedidosAceptados: '<path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7Z"/><path d="m9 12 2 2 4-4"/>',
+    warehouse3d: '<path d="M12 2 3 7l9 5 9-5Z"/><path d="M3 7v10l9 5 9-5V7"/><path d="M12 12v10"/>',
+    cerrarOt: '<path d="M20 6 9 17l-5-5"/><path d="M4 20h16"/>',
+    calificarOt: '<path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8-6.2-3.3L5.8 21 7 14.2 2 9.3l6.9-1Z"/>',
+    historialCalificaciones: '<path d="m12 2 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8Z"/><path d="M4 22h16"/>',
+    historialOt: '<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 3v6h6"/><path d="M14 12h5"/>',
+    config: '<path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1A2 2 0 1 1 4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1A2 2 0 1 1 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1A2 2 0 1 1 19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
+    asistenteCielo: '<path d="M12 3a6 6 0 0 0-6 6v3a6 6 0 0 0 12 0V9a6 6 0 0 0-6-6Z"/><path d="M8 21h8"/><path d="M12 18v3"/><path d="M9 10h.01"/><path d="M15 10h.01"/>',
+    default: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2"/>',
+  };
+  const body = icons[name] || icons.default;
+  return `<span class="mantto-nav-svg" aria-hidden="true"><svg viewBox="0 0 24 24" role="img" focusable="false">${body}</svg></span>`;
+}
+
+function decorateManttoVisualSystem(root = document) {
+  const viewIcon = {
+    home: "home",
+    aviso: "aviso",
+    ot: "ot",
+    atenderAviso: "atenderAviso",
+    peticion: "peticion",
+    almacen: "almacen",
+    ingresoItem: "ingresoItem",
+    kardex: "kardex",
+    historialPeticiones: "historialPeticiones",
+    pedidosAceptados: "pedidosAceptados",
+    warehouse3d: "warehouse3d",
+    cerrarOt: "cerrarOt",
+    calificarOt: "calificarOt",
+    historialCalificaciones: "historialCalificaciones",
+    historialOt: "historialOt",
+    config: "config",
+    asistenteCielo: "asistenteCielo",
+  };
+  const viewLabel = {
+    home: "Inicio",
+    aviso: "Generar aviso",
+    ot: "Generar OT",
+    atenderAviso: "Atender aviso",
+    peticion: "Petición de item",
+    almacen: "Almacén",
+    ingresoItem: "Ingreso item",
+    kardex: "Kardex",
+    historialPeticiones: "Historial peticiones",
+    pedidosAceptados: "Pedidos aceptados",
+    warehouse3d: "Almacén 3D",
+    cerrarOt: "Cerrar OT's",
+    calificarOt: "Calificar OT",
+    historialCalificaciones: "Historial calificaciones",
+    historialOt: "Historial de OT",
+    config: "Configuración",
+    asistenteCielo: "Cielo",
+  };
+  root.querySelectorAll(".nav-list button[data-view]").forEach((button) => {
+    const view = button.dataset.view || "";
+    const label = viewLabel[view] || button.title || button.textContent.trim();
+    const icon = viewIcon[view] || "default";
+    button.dataset.uiIcon = icon;
+    button.classList.add("mantto-nav-item");
+    button.title = label;
+    button.innerHTML = `${manttoSvgIcon(icon)}<span class="mantto-nav-label">${escapeHtml(label)}</span>`;
+  });
+  root.querySelectorAll(".kpi-card").forEach((card) => card.classList.add("mantto-elevated-card"));
+  root.querySelectorAll(".table-wrap").forEach((wrap) => wrap.classList.add("mantto-data-table"));
+  root.querySelectorAll(".screen-head").forEach((head) => head.classList.add("mantto-screen-head"));
+  root.querySelectorAll(".chart-card-v38, .compact-card-v38").forEach((card) => card.classList.add("mantto-chart-card"));
+  root.querySelectorAll(".almacen-category-chip, .peticion-category-cover, .accepted-category-card").forEach((card) => card.classList.add("mantto-category-card"));
+  root.querySelectorAll("button.primary").forEach((button) => button.classList.add("mantto-btn-primary"));
+  root.querySelectorAll("button.secondary, .back-btn").forEach((button) => button.classList.add("mantto-btn-secondary"));
+  root.querySelectorAll("button.danger").forEach((button) => button.classList.add("mantto-btn-danger"));
+}
+
 function renderDashboard(prefix) {
   if (!state.dashboard) return;
   if (prefix !== "app") return;
@@ -2812,13 +2929,13 @@ function renderDashboard(prefix) {
   if (headText) headText.textContent = "Centro de control de OT, avisos, peticiones y equipos.";
   const metrics = dashboardMetrics();
   const kpis = [
-    ["OT abiertas", metrics.otsAbiertas, "blue", "🛠"],
-    ["OT cerradas", metrics.otsCerradas, "green", "✅"],
-    ["Avisos abiertos", metrics.avisosAbiertos, "yellow", "⚠"],
-    ["Peticiones", metrics.peticionesPendientes, "blue", "📦"],
-    ["Por calificar", metrics.porCalificar, "green", "⭐"],
-    ["Equipos en DB", state.dashboard.equipos || state.catalogos.equipos.length || 0, "blue", "🏭"],
-    ["Stock bajo", lowStockRows().length, lowStockRows().length ? "red" : "green", "📦"],
+    ["OT abiertas", metrics.otsAbiertas, "blue", "OT"],
+    ["OT cerradas", metrics.otsCerradas, "green", "OK"],
+    ["Avisos abiertos", metrics.avisosAbiertos, "yellow", "AV"],
+    ["Peticiones", metrics.peticionesPendientes, "blue", "RQ"],
+    ["Por calificar", metrics.porCalificar, "green", "QA"],
+    ["Equipos en DB", state.dashboard.equipos || state.catalogos.equipos.length || 0, "blue", "EQ"],
+    ["Stock bajo", lowStockRows().length, lowStockRows().length ? "red" : "green", "ST"],
   ];
   $("dashboardKpis").innerHTML = kpis.map(([label, value, tone, icon]) => `
     <article class="kpi-card kpi-${tone} ${label === "Stock bajo" ? "inventory-alert-card" : ""}" data-icon="${escapeHtml(icon)}" ${label === "Stock bajo" ? 'data-open-low-stock="true"' : ""}>
@@ -2877,28 +2994,24 @@ function renderDashboardV38() {
   host.innerHTML = `
     <section class="mantto-dashboard-v38">
       <article class="chart-card-v38 chart-main-v40">
-        <h3>OT creadas por mes</h3>
+        <h3>Tendencia de OT</h3>
         <div id="dashOtMes"></div>
       </article>
       <article class="chart-card-v38 chart-side-v40">
-        <h3>Estado de ordenes de trabajo</h3>
+        <h3>Estado de OT</h3>
         <div id="dashOtEstado"></div>
       </article>
       <article class="chart-card-v38 chart-side-v40">
-        <h3>Avisos por estado</h3>
-        <div id="dashAvisos"></div>
+        <h3>OT por prioridad</h3>
+        <div id="dashOtPrioridad"></div>
       </article>
       <article class="chart-card-v38 chart-small-v44">
         <h3>OT por area</h3>
         <div id="dashOtArea"></div>
       </article>
       <article class="chart-card-v38 chart-small-v44">
-        <h3>OT por equipo</h3>
-        <div id="dashOtEquipo"></div>
-      </article>
-      <article class="chart-card-v38 chart-small-v44">
-        <h3>OT por tipo</h3>
-        <div id="dashOtTipo"></div>
+        <h3>Avisos por tipo</h3>
+        <div id="dashAvisos"></div>
       </article>
       <article class="chart-card-v38 chart-small-v44">
         <h3>OT por linea / proceso</h3>
@@ -2907,6 +3020,10 @@ function renderDashboardV38() {
       <article class="chart-card-v38 chart-small-v44">
         <h3>OT por tecnico</h3>
         <div id="dashOtTecnico"></div>
+      </article>
+      <article class="chart-card-v38 chart-small-v44">
+        <h3>OT por equipo</h3>
+        <div id="dashOtEquipo"></div>
       </article>
       <article class="compact-card-v38 recent-card-v41">
         <div class="recent-head-v41">
@@ -2924,13 +3041,13 @@ function renderDashboardV38() {
 
   const otsActivas = activeDashboardOts();
   renderDonutChart("dashOtEstado", groupRows(otsActivas, (row) => row.estado, "Sin estado"));
-  renderMonthBarChart("dashOtMes", groupOtsByMonth(otsActivas));
-  renderBarChartRows("dashOtArea", groupRows(otsActivas, (row) => otAreaValue(row), "Sin area"), 6);
+  renderLineChart("dashOtMes", groupOtsByMonth(otsActivas));
+  renderRadarChart("dashOtPrioridad", groupRows(otsActivas, (row) => row.tipo_falla || row.prioridad, "Sin prioridad"), ["Critica", "Alta", "Media", "Baja"]);
+  renderVerticalBarChart("dashOtArea", groupRows(otsActivas, (row) => otAreaValue(row), "Sin area"), 6);
   renderBarChartRows("dashOtEquipo", groupRows(otsActivas, (row) => otEquipoValue(row), "Sin equipo"), 6);
   renderBarChartRows("dashOtLinea", groupRows(otsActivas, (row) => otLineaValue(row), "Sin linea"), 6);
-  renderBarChartRows("dashOtTipo", groupRows(otsActivas, (row) => row.tipo_intervencion || row.tipo_servicio, "Sin tipo"), 6);
   renderBarChartRows("dashOtTecnico", groupOtsByTechnician(otsActivas), 6);
-  renderBarChartRows("dashAvisos", groupRows(state.avisos, (row) => row.estado, "Sin estado"), 5);
+  renderBarChartRows("dashAvisos", groupRows(state.avisos, (row) => row.tipo_aviso || row.tipo_falla || row.estado, "Sin tipo"), 5);
   renderDashboardRecentPanel();
 }
 
@@ -3055,6 +3172,121 @@ function renderBarChartRows(id, rows, limit = 12) {
     const percent = Math.round((total / sum) * 100);
     return `<div class="bar-row"><span title="${escapeHtml(row.label)}">${escapeHtml(row.label)}</span><div><i style="width:${width}%"></i></div><strong>${total} · ${percent}%</strong></div>`;
   }).join("")}</div>`;
+}
+
+function renderLineChart(id, rows) {
+  const host = $(id);
+  if (!host) return;
+  rows = (rows || []).filter((row) => Number(row.total || 0) > 0);
+  if (!rows.length) {
+    host.innerHTML = '<p class="empty-state">No hay datos disponibles.</p>';
+    return;
+  }
+  const max = Math.max(...rows.flatMap((row) => [Number(row.total || 0), Number(row.closed || 0)]), 1);
+  const width = 720;
+  const height = 230;
+  const pad = 30;
+  const step = rows.length > 1 ? (width - pad * 2) / (rows.length - 1) : 0;
+  const point = (value, index) => {
+    const x = pad + step * index;
+    const y = height - pad - ((Number(value || 0) / max) * (height - pad * 2));
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  };
+  const createdPoints = rows.map((row, index) => point(row.total, index));
+  const closedPoints = rows.map((row, index) => point(row.closed, index));
+  host.innerHTML = `
+    <div class="line-chart-v91">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Tendencia mensual de ordenes de trabajo">
+        <g class="grid">
+          <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}"></line>
+          <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}"></line>
+          <line x1="${pad}" y1="${height * 0.34}" x2="${width - pad}" y2="${height * 0.34}"></line>
+          <line x1="${pad}" y1="${height * 0.58}" x2="${width - pad}" y2="${height * 0.58}"></line>
+        </g>
+        <polyline class="line-created" points="${createdPoints.join(" ")}"></polyline>
+        <polyline class="line-closed" points="${closedPoints.join(" ")}"></polyline>
+        ${rows.map((row, index) => {
+          const [cx, cy] = point(row.total, index).split(",");
+          const [dx, dy] = point(row.closed, index).split(",");
+          return `
+            <circle class="dot-created" cx="${cx}" cy="${cy}" r="4"><title>${escapeHtml(row.label)}: ${Number(row.total || 0)} creadas</title></circle>
+            <circle class="dot-closed" cx="${dx}" cy="${dy}" r="4"><title>${escapeHtml(row.label)}: ${Number(row.closed || 0)} cerradas</title></circle>
+          `;
+        }).join("")}
+      </svg>
+      <div class="line-chart-labels">${rows.map((row) => `<span>${escapeHtml(row.label)}</span>`).join("")}</div>
+      <div class="chart-legend-v91"><span><i class="created"></i>OT creadas</span><span><i class="closed"></i>OT cerradas</span></div>
+    </div>
+  `;
+}
+
+function renderVerticalBarChart(id, rows, limit = 8) {
+  const host = $(id);
+  if (!host) return;
+  rows = (rows || []).filter((row) => Number(row.total || 0) >= 0).slice(0, limit);
+  if (!rows.length) {
+    host.innerHTML = '<p class="empty-state">No hay datos disponibles.</p>';
+    return;
+  }
+  const max = Math.max(...rows.map((row) => Number(row.total || 0)), 1);
+  host.innerHTML = `
+    <div class="vertical-bars-v91">
+      ${rows.map((row) => {
+        const total = Number(row.total || 0);
+        const height = Math.max(total ? 8 : 0, Math.round((total / max) * 100));
+        return `
+          <div class="vertical-bar-v91" title="${escapeHtml(row.label)}: ${total}">
+            <strong>${total}</strong>
+            <i style="height:${height}%"></i>
+            <span>${escapeHtml(row.label)}</span>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderRadarChart(id, rows, labels = []) {
+  const host = $(id);
+  if (!host) return;
+  const source = rows || [];
+  const data = labels.map((label) => {
+    const normalized = normalizeText(label);
+    const row = source.find((item) => normalizeText(item.label).includes(normalized) || normalized.includes(normalizeText(item.label)));
+    return { label, total: Number(row?.total || 0) };
+  });
+  const hasAny = data.some((row) => row.total > 0);
+  if (!hasAny) {
+    host.innerHTML = '<p class="empty-state">No hay datos disponibles.</p>';
+    return;
+  }
+  const max = Math.max(...data.map((row) => row.total), 1);
+  const center = 115;
+  const radius = 82;
+  const axis = data.map((row, index) => {
+    const angle = (-90 + (360 / data.length) * index) * Math.PI / 180;
+    return {
+      ...row,
+      x: center + Math.cos(angle) * radius,
+      y: center + Math.sin(angle) * radius,
+      px: center + Math.cos(angle) * radius * (row.total / max),
+      py: center + Math.sin(angle) * radius * (row.total / max),
+    };
+  });
+  host.innerHTML = `
+    <div class="radar-wrap-v91">
+      <svg viewBox="0 0 230 230" role="img" aria-label="OT por prioridad">
+        <polygon class="radar-grid" points="${axis.map((row) => `${row.x},${row.y}`).join(" ")}"></polygon>
+        <polygon class="radar-grid small" points="${axis.map((row) => `${center + (row.x - center) * 0.5},${center + (row.y - center) * 0.5}`).join(" ")}"></polygon>
+        ${axis.map((row) => `<line class="radar-axis" x1="${center}" y1="${center}" x2="${row.x}" y2="${row.y}"></line>`).join("")}
+        <polygon class="radar-area" points="${axis.map((row) => `${row.px},${row.py}`).join(" ")}"></polygon>
+        ${axis.map((row) => `<circle class="radar-dot" cx="${row.px}" cy="${row.py}" r="4"><title>${escapeHtml(row.label)}: ${row.total}</title></circle>`).join("")}
+      </svg>
+      <div class="radar-legend-v91">
+        ${data.map((row) => `<div><span>${escapeHtml(row.label)}</span><strong>${row.total}</strong></div>`).join("")}
+      </div>
+    </div>
+  `;
 }
 
 function renderMonthBarChart(id, rows) {
@@ -3425,7 +3657,7 @@ function renderPeticionGroupedResults() {
         <div class="peticion-category-open-view">
           <div class="peticion-category-open-head">
             <button class="secondary" type="button" onclick="togglePeticionCategoria('')">← Ver categorias</button>
-            <span class="category-image category-image-large" style="background-image:url('${escapeHtml(meta.imagen)}')"><i>${escapeHtml(meta.icono)}</i></span>
+            <span class="category-image category-image-large" style="background-image:url('${escapeHtml(meta.imagen)}')"><i>${escapeHtml(categoriaIconoVisual(meta.icono, meta.nombre || categoria))}</i></span>
             <div>
               <h3>${escapeHtml(categoria)}</h3>
               <p>${items.length.toLocaleString("es-PE")} material(es) disponible(s)</p>
@@ -3446,7 +3678,7 @@ function renderPeticionGroupedResults() {
       return `
         <section class="peticion-category-group peticion-category-block">
           <button class="peticion-category-cover" type="button" onclick="togglePeticionCategoria('${escapeJs(meta.id)}')">
-            <span class="category-image category-image-large" style="background-image:url('${escapeHtml(meta.imagen)}')"><i>${escapeHtml(meta.icono)}</i></span>
+            <span class="category-image category-image-large" style="background-image:url('${escapeHtml(meta.imagen)}')"><i>${escapeHtml(categoriaIconoVisual(meta.icono, meta.nombre || categoria))}</i></span>
             <div>
               <h3>${escapeHtml(categoria)}</h3>
               <p>${items.length.toLocaleString("es-PE")} material(es) disponible(s)</p>
@@ -4056,14 +4288,16 @@ function renderAlmacen() {
     .filter((row) => !tipo || row._tabla === tipo)
     .filter((row) => categoriaFiltro === "todas" || row.categoria_id === categoriaFiltro)
     .filter((row) => !state.almacenStockFilter || inventoryStatus(row).state === state.almacenStockFilter)
-    .filter((row) => !q || ["codigo", "descripcion", "categoria", "area", "modelo", "ubicacion", "proveedor", "unidad", "tipo"].some((key) => normalizeText(itemValue(row, key) || row[key] || row.categoria_virtual || "").includes(q)));
+    .filter((row) => !q || ["codigo", "codigo_barras", "descripcion", "categoria", "area", "modelo", "ubicacion", "proveedor", "unidad", "tipo"].some((key) => normalizeText(itemValue(row, key) || row[key] || row.categoria_virtual || "").includes(q)));
   ensureAlmacenToolbar();
   ensureAlmacenCategoryFilter(counts);
   ensureAlmacenCategorySummary(counts);
   $("almacenTable").innerHTML = renderTable(
     rows,
     [
+      { key: "seleccion", label: "Sel.", render: (row) => `<input type="checkbox" class="barcode-row-check" data-barcode-id="${escapeHtml(itemIdentity(row))}" ${state.almacenBarcodeSelected.has(itemIdentity(row)) ? "checked" : ""} aria-label="Seleccionar etiqueta">` },
       { key: "codigo", label: "Codigo", render: (row) => escapeHtml(itemValue(row, "codigo")) },
+      { key: "codigo_barras", label: "Cod. barras", render: (row) => renderBarcodeInline(row) },
       { key: "descripcion", label: "Descripcion", render: (row) => escapeHtml(itemValue(row, "descripcion")) },
       { key: "modelo", label: "Modelo", render: (row) => escapeHtml(itemValue(row, "modelo")) },
       { key: "categoria_virtual", label: "Categoria", render: (row) => badge(row.categoria_virtual || "Sin categorizar") },
@@ -4078,10 +4312,22 @@ function renderAlmacen() {
       } },
     ],
     (row) => `
+      <button type="button" onclick="abrirCodigoBarras('${escapeJs(itemIdentity(row))}')">🏷 Codigo</button>
+      <button type="button" onclick="imprimirEtiquetasInventario(['${escapeJs(itemIdentity(row))}'])">🖨 Imprimir</button>
       <button type="button" onclick="abrirConfigInventario('${escapeJs(itemIdentity(row))}')">⚙ Configurar</button>
       <button type="button" onclick="abrirCategorizarRepuesto('${escapeJs(itemIdentity(row))}')">Categorizar</button>
     `
   );
+  document.querySelectorAll(".barcode-row-check").forEach((check) => {
+    check.addEventListener("change", (event) => {
+      const id = event.currentTarget.dataset.barcodeId;
+      if (!id) return;
+      if (event.currentTarget.checked) state.almacenBarcodeSelected.add(id);
+      else state.almacenBarcodeSelected.delete(id);
+      updateBarcodeSelectionCounter();
+    });
+  });
+  updateBarcodeSelectionCounter();
 }
 
 function ensureAlmacenToolbar() {
@@ -4089,9 +4335,16 @@ function ensureAlmacenToolbar() {
   if (!table || $("exportarAlmacenExcel")) return;
   const toolbar = document.createElement("div");
   toolbar.className = "form-actions almacen-export-actions";
-  toolbar.innerHTML = '<button id="exportarAlmacenExcel" class="primary" type="button">📊 Exportar Excel</button>';
+  toolbar.innerHTML = `
+    <button id="generarCodigosBarrasSeleccion" class="secondary" type="button">🏷 Generar codigos</button>
+    <button id="imprimirCodigosBarrasSeleccion" class="secondary" type="button">🖨 Imprimir etiquetas</button>
+    <span id="barcodeSelectionCounter" class="barcode-selection-counter">0 seleccionados</span>
+    <button id="exportarAlmacenExcel" class="primary" type="button">📊 Exportar Excel</button>
+  `;
   table.insertAdjacentElement("beforebegin", toolbar);
   $("exportarAlmacenExcel").addEventListener("click", exportarAlmacenExcel);
+  $("generarCodigosBarrasSeleccion")?.addEventListener("click", generarCodigosBarrasSeleccionados);
+  $("imprimirCodigosBarrasSeleccion")?.addEventListener("click", () => imprimirEtiquetasInventario([...state.almacenBarcodeSelected]));
 }
 
 function ensureAlmacenCategoryFilter(counts) {
@@ -4109,7 +4362,7 @@ function ensureAlmacenCategoryFilter(counts) {
       ${categoriasRepuestos().map((cat) => `
         <div class="almacen-category-chip-wrap">
           <button type="button" class="almacen-category-chip ${state.almacenCategoria === cat.id ? "active" : ""}" onclick="seleccionarCategoriaAlmacen('${escapeJs(cat.id)}')">
-            <span class="category-image" style="${cat.imagen ? `background-image:url('${escapeHtml(cat.imagen)}')` : ""}"><i>${escapeHtml(cat.icono)}</i></span>
+            <span class="category-image" style="${cat.imagen ? `background-image:url('${escapeHtml(cat.imagen)}')` : ""}"><i>${escapeHtml(categoriaIconoVisual(cat.icono, cat.nombre))}</i></span>
             <strong>${escapeHtml(cat.nombre)}</strong>
             <small>${(counts.get(cat.id) || 0).toLocaleString("es-PE")}</small>
           </button>
@@ -4178,6 +4431,193 @@ function verSinCategorizarAlmacen() {
 function limpiarFiltroCategoriaAlmacen() {
   state.almacenCategoria = "todas";
   renderAlmacen();
+}
+
+function barcodeValue(row) {
+  return String(itemValue(row, "codigo_barras") || row.codigo_barras || "").trim();
+}
+
+function renderBarcodeInline(row) {
+  const code = barcodeValue(row);
+  if (!code) return '<span class="barcode-empty">Sin codigo</span>';
+  return `<span class="barcode-mini"><span>${escapeHtml(code)}</span>${renderBarcodeSvg(code, 128, 28)}</span>`;
+}
+
+function updateBarcodeSelectionCounter() {
+  const counter = $("barcodeSelectionCounter");
+  if (counter) counter.textContent = `${state.almacenBarcodeSelected.size} seleccionado(s)`;
+}
+
+function barcodeRowsFromIds(ids = []) {
+  return ids.map((id) => findInventoryItem(id)).filter(Boolean);
+}
+
+function fallbackBarcodeCode(row) {
+  const sede = normalizeText(itemValue(row, "sede")).replace(/\D/g, "").slice(0, 2);
+  const raw = `${itemValue(row, "codigo") || row.id || itemValue(row, "descripcion") || ""}`;
+  let hash = 0;
+  for (const char of raw) hash = ((hash * 31) + char.charCodeAt(0)) >>> 0;
+  return `750${sede || "00"}${String(hash % 100000000).padStart(8, "0")}`;
+}
+
+function renderBarcodeSvg(value, width = 220, height = 54) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const bits = [];
+  for (const char of text) {
+    const code = char.charCodeAt(0);
+    bits.push(1, 0);
+    for (let i = 6; i >= 0; i -= 1) bits.push((code >> i) & 1);
+    bits.push(0);
+  }
+  bits.unshift(1, 0, 1, 0, 1, 0);
+  bits.push(1, 0, 1, 0, 1);
+  const barWidth = Math.max(1, Math.floor(width / bits.length));
+  const totalWidth = bits.length * barWidth;
+  const offset = Math.max(0, Math.floor((width - totalWidth) / 2));
+  const bars = bits.map((bit, index) => bit ? `<rect x="${offset + index * barWidth}" y="0" width="${barWidth}" height="${height}" rx="0.5"></rect>` : "").join("");
+  return `<svg class="barcode-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Codigo de barras ${escapeHtml(text)}">${bars}</svg>`;
+}
+
+async function abrirCodigoBarras(id) {
+  const row = findInventoryItem(id);
+  if (!row) return;
+  const current = barcodeValue(row);
+  const generated = current || fallbackBarcodeCode(row);
+  const ok = await pedirConfirmacion(
+    "Codigo de barras",
+    `
+      <form id="barcodeForm" class="form-grid barcode-form">
+        <dl class="span-full">
+          <dt>Codigo producto</dt><dd>${escapeHtml(itemValue(row, "codigo") || "-")}</dd>
+          <dt>Descripcion</dt><dd>${escapeHtml(itemValue(row, "descripcion") || "-")}</dd>
+          <dt>Ubicacion</dt><dd>${escapeHtml(itemValue(row, "ubicacion") || "-")}</dd>
+        </dl>
+        <label class="span-full">Codigo de barras
+          <input name="codigo_barras" value="${escapeHtml(current || generated)}" autocomplete="off">
+        </label>
+        <div class="barcode-preview span-full">
+          <strong>Vista previa</strong>
+          ${renderBarcodeSvg(current || generated, 320, 72)}
+          <span>${escapeHtml(current || generated)}</span>
+        </div>
+        <div class="form-actions span-full">
+          <button class="secondary" type="button" onclick="generarCodigoBarrasModal('${escapeJs(id)}')">Generar codigo</button>
+          <button class="secondary" type="button" onclick="regenerarCodigoBarrasModal('${escapeJs(id)}')">Regenerar codigo</button>
+        </div>
+      </form>
+    `,
+    "Guardar"
+  );
+  if (!ok) return;
+  const form = $("barcodeForm");
+  const code = String(form?.elements?.codigo_barras?.value || "").trim();
+  if (!code) return toast("Ingrese o genere un codigo de barras", "warning");
+  await guardarCodigoBarras(row, code, false);
+}
+
+async function guardarCodigoBarras(row, codigo, generar = false) {
+  try {
+    const result = await api(`/api/inventario/${encodeURIComponent(row._tabla)}/${encodeURIComponent(row.id || itemValue(row, "codigo"))}/codigo-barras`, {
+      method: "PATCH",
+      body: JSON.stringify({ codigo_barras: codigo || "", generar }),
+    });
+    row.codigo_barras = result.codigo_barras;
+    toast("Codigo de barras guardado", "success");
+    await refreshAfterMutation();
+    renderAlmacen();
+  } catch (err) {
+    toast(err.message || "No se pudo guardar el codigo", "error");
+  }
+}
+
+async function generarCodigoBarrasModal(id) {
+  const row = findInventoryItem(id);
+  if (!row) return;
+  const input = $("barcodeForm")?.elements?.codigo_barras;
+  if (input) input.value = fallbackBarcodeCode(row);
+  const preview = document.querySelector("#barcodeForm .barcode-preview");
+  if (preview && input) preview.innerHTML = `<strong>Vista previa</strong>${renderBarcodeSvg(input.value, 320, 72)}<span>${escapeHtml(input.value)}</span>`;
+}
+
+async function regenerarCodigoBarrasModal(id) {
+  const row = findInventoryItem(id);
+  if (!row) return;
+  try {
+    const result = await api(`/api/inventario/${encodeURIComponent(row._tabla)}/${encodeURIComponent(row.id || itemValue(row, "codigo"))}/codigo-barras`, {
+      method: "PATCH",
+      body: JSON.stringify({ generar: true }),
+    });
+    const input = $("barcodeForm")?.elements?.codigo_barras;
+    if (input) input.value = result.codigo_barras || "";
+    const preview = document.querySelector("#barcodeForm .barcode-preview");
+    if (preview) preview.innerHTML = `<strong>Vista previa</strong>${renderBarcodeSvg(result.codigo_barras, 320, 72)}<span>${escapeHtml(result.codigo_barras)}</span>`;
+    await refreshAfterMutation();
+    renderAlmacen();
+    toast("Codigo regenerado", "success");
+  } catch (err) {
+    toast(err.message || "No se pudo regenerar codigo", "error");
+  }
+}
+
+async function generarCodigosBarrasSeleccionados() {
+  const rows = barcodeRowsFromIds([...state.almacenBarcodeSelected]);
+  if (!rows.length) return toast("Seleccione uno o mas productos", "warning");
+  for (const row of rows) {
+    if (!barcodeValue(row)) {
+      await guardarCodigoBarras(row, "", true);
+    }
+  }
+  toast("Codigos generados para la seleccion", "success");
+}
+
+function imprimirEtiquetasInventario(ids = []) {
+  const rows = barcodeRowsFromIds(ids.length ? ids : [...state.almacenBarcodeSelected]);
+  if (!rows.length) return toast("Seleccione productos para imprimir", "warning");
+  const labels = rows.map((row) => {
+    const code = barcodeValue(row) || fallbackBarcodeCode(row);
+    return `
+      <article class="barcode-label">
+        <div class="barcode-location">UBICACION: ${escapeHtml(itemValue(row, "ubicacion") || "Sin ubicacion")}</div>
+        <div class="barcode-code">${renderBarcodeSvg(code, 260, 62)}</div>
+        <div class="barcode-number">${escapeHtml(code)}</div>
+        <strong>${escapeHtml(itemValue(row, "codigo") || "-")}</strong>
+        <span>${escapeHtml(itemValue(row, "descripcion") || "-")}</span>
+        <small>${escapeHtml(itemValue(row, "sede") || "")}</small>
+      </article>
+    `;
+  }).join("");
+  const win = window.open("", "_blank", "width=980,height=720");
+  if (!win) return toast("El navegador bloqueo la ventana de impresion", "warning");
+  win.document.write(`
+    <!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8">
+        <title>Etiquetas MANTTO</title>
+        <style>
+          * { box-sizing: border-box; }
+          body { margin: 0; padding: 14mm; font-family: Arial, sans-serif; color: #10243f; }
+          .label-sheet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8mm; }
+          .barcode-label { min-height: 50mm; border: 1.5px solid #10243f; border-radius: 6px; padding: 6mm; display: grid; gap: 2.5mm; break-inside: avoid; page-break-inside: avoid; }
+          .barcode-location { font-size: 12px; font-weight: 800; color: #064b8f; text-transform: uppercase; }
+          .barcode-code { display: grid; place-items: center; }
+          .barcode-svg { width: 100%; max-width: 74mm; height: 18mm; fill: #0f172a; }
+          .barcode-number { font-size: 13px; font-weight: 900; text-align: center; letter-spacing: 1px; }
+          strong { font-size: 13px; }
+          span, small { font-size: 11px; color: #334155; }
+          @media print { body { padding: 10mm; } .no-print { display: none; } }
+          @media (max-width: 700px) { .label-sheet { grid-template-columns: 1fr; } }
+        </style>
+      </head>
+      <body>
+        <button class="no-print" onclick="window.print()" style="margin-bottom:12px;padding:10px 14px;background:#0877d8;color:white;border:0;border-radius:6px;font-weight:800;">Imprimir</button>
+        <section class="label-sheet">${labels}</section>
+      </body>
+    </html>
+  `);
+  win.document.close();
+  setTimeout(() => win.focus(), 100);
 }
 
 function abrirCategorizarRepuesto(id) {
@@ -4369,6 +4809,7 @@ function renderIngresoItem() {
         <div id="ingresoItemResults" class="table-wrap ingreso-results">
           ${q ? renderTable(results, [
             { key: "codigo", label: "Codigo", render: (row) => escapeHtml(itemValue(row, "codigo")) },
+            { key: "codigo_barras", label: "Cod. barras", render: (row) => escapeHtml(barcodeValue(row) || "-") },
             { key: "descripcion", label: "Descripcion", render: (row) => escapeHtml(itemValue(row, "descripcion")) },
             { key: "unidad", label: "Unidad", render: (row) => escapeHtml(itemValue(row, "unidad")) },
             { key: "cantidad", label: "Stock", render: (row) => inventoryNumber(row, "cantidad").toLocaleString("es-PE") },
@@ -4378,6 +4819,7 @@ function renderIngresoItem() {
       <input type="hidden" name="tabla" value="${escapeHtml(selected?._tabla || "repuestos")}">
       <input type="hidden" name="sede" value="${escapeHtml(effectiveSedeScope() || "")}">
       <label>Codigo<input name="codigo" required readonly value="${escapeHtml(selected ? itemValue(selected, "codigo") : "")}" placeholder="Seleccione un producto"></label>
+      <label>Codigo de barras<input name="codigo_barras" readonly value="${escapeHtml(selected ? barcodeValue(selected) : "")}" placeholder="Sin codigo"></label>
       <label>Descripcion<input name="descripcion" required readonly value="${escapeHtml(selected ? itemValue(selected, "descripcion") : "")}"></label>
       <label>Unidad<input name="unidad" readonly value="${escapeHtml(selected ? itemValue(selected, "unidad") : "")}"></label>
     ` : `
@@ -4388,6 +4830,12 @@ function renderIngresoItem() {
         </select>
       </label>
       <label>Codigo nuevo<input name="codigo" required placeholder="Codigo nuevo del item"></label>
+      <label>Codigo de barras
+        <div class="barcode-input-row">
+          <input name="codigo_barras" placeholder="Opcional">
+          <button type="button" class="secondary" onclick="generarCodigoIngresoItem()">Generar</button>
+        </div>
+      </label>
       <input type="hidden" name="sede" value="${escapeHtml(effectiveSedeScope() || "")}">
       <label>Descripcion<input name="descripcion" required placeholder="Descripcion del item"></label>
       <label>Unidad<input name="unidad" placeholder="UND, KG, LT..."></label>
@@ -4453,6 +4901,18 @@ function seleccionarIngresoItem(id) {
   state.ingresoItemSearch = `${itemValue(row, "codigo")} ${itemValue(row, "descripcion")}`.trim();
   renderIngresoItem();
   toast("Item seleccionado", "success");
+}
+
+function generarCodigoIngresoItem() {
+  const form = $("ingresoItemForm");
+  const input = form?.elements?.codigo_barras;
+  if (!input) return;
+  const tempRow = {
+    codigo: form.elements?.codigo?.value || (window.crypto?.randomUUID?.() || String(Date.now())),
+    sede: effectiveSedeScope() || "",
+    descripcion: form.elements?.descripcion?.value || "",
+  };
+  input.value = fallbackBarcodeCode(tempRow);
 }
 
 function renderHistorialPeticiones() {
@@ -4680,7 +5140,7 @@ function renderCategoriasAceptadas(componentes) {
     .filter((cat) => cat.id === "todas" || (counts.get(cat.id) || 0) > 0 || cat.id === "sin_categorizar")
     .map((cat) => `
       <button type="button" class="accepted-category-card ${state.pedidoAceptadoCategoria === cat.id ? "active" : ""}" onclick="seleccionarCategoriaPedidosAceptados('${escapeJs(cat.id)}')">
-        <span class="category-image" style="background-image:url('${escapeHtml(cat.imagen)}')"><i>${escapeHtml(cat.icono)}</i></span>
+        <span class="category-image" style="background-image:url('${escapeHtml(cat.imagen)}')"><i>${escapeHtml(categoriaIconoVisual(cat.icono, cat.nombre))}</i></span>
         <strong>${escapeHtml(cat.nombre)}</strong>
         <small>${(counts.get(cat.id) || 0).toLocaleString("es-PE")} componente(s)</small>
       </button>
@@ -5406,6 +5866,7 @@ function renderInventarioConfig(tab) {
   const columns = [
     { key: "sede", label: "SEDE", render: (row) => escapeHtml(itemValue(row, "sede") || row.sede || "") },
     { key: "codigo", label: "CODIGO", render: (row) => escapeHtml(itemValue(row, "codigo")) },
+    { key: "codigo_barras", label: "CODIGO_BARRAS", render: (row) => escapeHtml(barcodeValue(row)) },
     { key: "descripcion", label: "DESCRIPCION", render: (row) => escapeHtml(itemValue(row, "descripcion")) },
     { key: "modelo", label: "MODELO", render: (row) => escapeHtml(itemValue(row, "modelo")) },
     { key: "cantidad", label: "CANTIDAD", render: (row) => escapeHtml(itemValue(row, "cantidad")) },

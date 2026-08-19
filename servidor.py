@@ -208,6 +208,11 @@ class StockLimitsIn(BaseModel):
     stock_maximo: Optional[float] = 0
 
 
+class CodigoBarrasIn(BaseModel):
+    codigo_barras: Optional[str] = ""
+    generar: Optional[bool] = False
+
+
 class OTCerrarIn(BaseModel):
     fecha_atencion: Optional[str] = ""
 
@@ -240,6 +245,7 @@ class InventarioIngresoIn(BaseModel):
     modelo: Optional[str] = ""
     ubicacion: Optional[str] = ""
     proveedor: Optional[str] = ""
+    codigo_barras: Optional[str] = ""
     stock_minimo: Optional[float] = 0
     stock_maximo: Optional[float] = 0
     cantidad: float
@@ -502,6 +508,50 @@ def assert_peticion_scope(conn, numero, user):
         raise HTTPException(status_code=403, detail="Peticion fuera de la sede del usuario")
 
 
+def get_inventory_row_for_user(conn, tabla, record_id, user):
+    validar_tabla(tabla, {"productos", "repuestos"})
+    if str(record_id).isdigit():
+        row = conn.execute(f"SELECT * FROM {tabla} WHERE id = ?", (int(record_id),)).fetchone()
+    else:
+        row = conn.execute(f"SELECT * FROM {tabla} WHERE codigo = ? LIMIT 1", (record_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Item de inventario no encontrado")
+    assert_row_sede(row, user, "Item de inventario")
+    return row
+
+
+def inventory_barcode_exists(conn, codigo_barras, exclude_table="", exclude_id=0):
+    code = str(codigo_barras or "").strip()
+    if not code:
+        return None
+    for table in ("productos", "repuestos"):
+        row = conn.execute(
+            f"""
+            SELECT id, codigo, descripcion, sede
+            FROM {table}
+            WHERE norm_text(COALESCE(codigo_barras, '')) = norm_text(?)
+              AND NOT (? = ? AND id = ?)
+            LIMIT 1
+            """,
+            (code, table, exclude_table, int(exclude_id or 0)),
+        ).fetchone()
+        if row:
+            data = dict(row)
+            data["tabla"] = table
+            return data
+    return None
+
+
+def generate_inventory_barcode(conn):
+    # 750 + 10 digitos mantiene compatibilidad visual con lectores EAN-like sin
+    # cambiar el codigo interno del repuesto.
+    for _ in range(200):
+        candidate = f"750{int(uuid.uuid4().int % 10_000_000_000):010d}"
+        if not inventory_barcode_exists(conn, candidate):
+            return candidate
+    raise HTTPException(status_code=500, detail="No se pudo generar un codigo unico")
+
+
 def is_jefe_user(user):
     role = str(user.get("role") or "").lower()
     cargo = str(user.get("cargo") or "").lower()
@@ -653,6 +703,7 @@ def init_mantto_extra_schema():
                 ("proveedor", "TEXT DEFAULT ''"),
                 ("stock_minimo", "REAL DEFAULT 0"),
                 ("stock_maximo", "REAL DEFAULT 0"),
+                ("codigo_barras", "TEXT DEFAULT ''"),
             ]:
                 mtto_ensure_column(conn, table, column, definition)
 
@@ -942,6 +993,7 @@ def dashboard_counts():
 INVENTORY_ALIASES = {
     "sede": ["sede", "planta", "local", "centro", "sucursal"],
     "codigo": ["codigo", "código", "cod", "cod_item", "codigo_item", "item", "sku"],
+    "codigo_barras": ["codigo_barras", "código_barras", "codigobarras", "codigo barras", "barcode", "bar_code", "ean", "ean13"],
     "tipo": ["tipo", "clase"],
     "categoria": ["categoria", "categoría", "familia", "grupo", "subfamilia"],
     "area": ["area", "área", "sector"],
@@ -980,6 +1032,7 @@ def importar_inventario_tx(tabla, registros):
             data = {
                 "codigo": codigo,
                 "sede": canonical_sede(str(mtto_pick(record, "sede")).strip()),
+                "codigo_barras": str(mtto_pick(record, "codigo_barras")).strip(),
                 "tipo": str(mtto_pick(record, "tipo")).strip(),
                 "categoria": str(mtto_pick(record, "categoria")).strip(),
                 "area": str(mtto_pick(record, "area")).strip(),
@@ -997,30 +1050,39 @@ def importar_inventario_tx(tabla, registros):
                 (codigo, data["sede"]),
             ).fetchone()
             if exists:
+                if data["codigo_barras"] and inventory_barcode_exists(conn, data["codigo_barras"], tabla, exists["id"]):
+                    stats["errores"] += 1
+                    stats["detalles"].append(f"Fila {index}: codigo de barras duplicado")
+                    continue
                 conn.execute(
                     f"""
                     UPDATE {tabla}
-                    SET sede=?, tipo=?, categoria=?, area=?, descripcion=?, modelo=?, cantidad=?, ubicacion=?, proveedor=?, unidad=?,
+                    SET sede=?, codigo_barras=COALESCE(NULLIF(?, ''), codigo_barras),
+                        tipo=?, categoria=?, area=?, descripcion=?, modelo=?, cantidad=?, ubicacion=?, proveedor=?, unidad=?,
                         stock_minimo=CASE WHEN ? > 0 THEN ? ELSE stock_minimo END,
                         stock_maximo=CASE WHEN ? > 0 THEN ? ELSE stock_maximo END
                     WHERE id=?
                     """,
                     (
-                        data["sede"], data["tipo"], data["categoria"], data["area"], data["descripcion"], data["modelo"],
+                        data["sede"], data["codigo_barras"], data["tipo"], data["categoria"], data["area"], data["descripcion"], data["modelo"],
                         data["cantidad"], data["ubicacion"], data["proveedor"], data["unidad"],
                         data["stock_minimo"], data["stock_minimo"], data["stock_maximo"], data["stock_maximo"], exists["id"],
                     ),
                 )
                 stats["actualizados"] += 1
             else:
+                if data["codigo_barras"] and inventory_barcode_exists(conn, data["codigo_barras"]):
+                    stats["errores"] += 1
+                    stats["detalles"].append(f"Fila {index}: codigo de barras duplicado")
+                    continue
                 conn.execute(
                     f"""
                     INSERT INTO {tabla}
-                    (codigo, sede, tipo, categoria, area, descripcion, modelo, cantidad, ubicacion, proveedor, unidad, stock_minimo, stock_maximo)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (codigo, sede, codigo_barras, tipo, categoria, area, descripcion, modelo, cantidad, ubicacion, proveedor, unidad, stock_minimo, stock_maximo)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        data["codigo"], data["sede"], data["tipo"], data["categoria"], data["area"], data["descripcion"], data["modelo"],
+                        data["codigo"], data["sede"], data["codigo_barras"], data["tipo"], data["categoria"], data["area"], data["descripcion"], data["modelo"],
                         data["cantidad"], data["ubicacion"], data["proveedor"], data["unidad"], data["stock_minimo"], data["stock_maximo"],
                     ),
                 )
@@ -2066,6 +2128,7 @@ def exportar_inventario_excel(
             haystack = mtto_norm(" ".join([
                 str(row.get("sede") or ""),
                 str(row.get("codigo") or ""),
+                str(row.get("codigo_barras") or ""),
                 str(row.get("descripcion") or ""),
                 str(row.get("modelo") or ""),
                 str(row.get("ubicacion") or ""),
@@ -2085,6 +2148,7 @@ def exportar_inventario_excel(
                 "MINIMO": minimo,
                 "MAXIMO": maximo,
                 "ESTADO": estado,
+                "CODIGO_BARRAS": row.get("codigo_barras") or "",
                 "CATEGORIA": row.get("categoria") or "",
             })
 
@@ -2120,6 +2184,8 @@ def registrar_ingreso_inventario(data: InventarioIngresoIn, user=Depends(require
         raise HTTPException(status_code=400, detail="Usuario sin sede asignada")
 
     with connect() as conn:
+        if data.codigo_barras and inventory_barcode_exists(conn, data.codigo_barras):
+            raise HTTPException(status_code=400, detail="El codigo de barras ya existe en otro producto")
         inv = conn.execute(
             f"SELECT * FROM {tabla} WHERE codigo = ? AND norm_text(COALESCE(sede, '')) = norm_text(?)",
             (codigo, sede_scope),
@@ -2134,6 +2200,8 @@ def registrar_ingreso_inventario(data: InventarioIngresoIn, user=Depends(require
                 tabla = alt
 
         if inv:
+            if data.codigo_barras and inventory_barcode_exists(conn, data.codigo_barras, tabla, inv["id"]):
+                raise HTTPException(status_code=400, detail="El codigo de barras ya existe en otro producto")
             stock_anterior = mtto_float(inv["cantidad"], 0)
             stock_posterior = stock_anterior + cantidad
             conn.execute(
@@ -2141,10 +2209,11 @@ def registrar_ingreso_inventario(data: InventarioIngresoIn, user=Depends(require
                 UPDATE {tabla}
                 SET descripcion = COALESCE(NULLIF(?, ''), descripcion),
                     unidad = COALESCE(NULLIF(?, ''), unidad),
+                    codigo_barras = COALESCE(NULLIF(?, ''), codigo_barras),
                     cantidad = ?
                 WHERE id = ?
                 """,
-                (descripcion, unidad, stock_posterior, inv["id"]),
+                (descripcion, unidad, data.codigo_barras or "", stock_posterior, inv["id"]),
             )
             item_id = inv["id"]
         else:
@@ -2155,8 +2224,8 @@ def registrar_ingreso_inventario(data: InventarioIngresoIn, user=Depends(require
                 f"""
                 INSERT INTO {tabla}
                 (codigo, sede, tipo, categoria, area, descripcion, modelo, cantidad, ubicacion,
-                 proveedor, unidad, stock_minimo, stock_maximo)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 proveedor, unidad, codigo_barras, stock_minimo, stock_maximo)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     codigo,
@@ -2170,6 +2239,7 @@ def registrar_ingreso_inventario(data: InventarioIngresoIn, user=Depends(require
                     data.ubicacion or "",
                     data.proveedor or "",
                     unidad,
+                    data.codigo_barras or "",
                     data.stock_minimo or 0,
                     data.stock_maximo or 0,
                 ),
@@ -2188,6 +2258,22 @@ def registrar_ingreso_inventario(data: InventarioIngresoIn, user=Depends(require
         )
         registrar_historial(conn, user["username"], "INGRESO INVENTARIO", tabla, codigo, str(stock_anterior), f"{stock_posterior} {detalle}")
         return {"ok": True, "tabla": tabla, "codigo": codigo, "stock_actual": stock_posterior}
+
+
+@app.patch("/api/inventario/{tabla}/{record_id}/codigo-barras")
+def actualizar_codigo_barras(tabla: str, record_id: str, data: CodigoBarrasIn, user=Depends(require_almacen_or_jefe)):
+    validar_tabla(tabla, {"productos", "repuestos"})
+    with connect() as conn:
+        row = get_inventory_row_for_user(conn, tabla, record_id, user)
+        codigo = str(data.codigo_barras or "").strip()
+        if data.generar or not codigo:
+            codigo = generate_inventory_barcode(conn)
+        duplicated = inventory_barcode_exists(conn, codigo, tabla, row["id"])
+        if duplicated:
+            raise HTTPException(status_code=400, detail=f"El codigo de barras ya existe en {duplicated.get('codigo') or duplicated.get('descripcion')}")
+        conn.execute(f"UPDATE {tabla} SET codigo_barras = ? WHERE id = ?", (codigo, row["id"]))
+        registrar_historial(conn, user["username"], "ACTUALIZO CODIGO BARRAS", tabla, row["codigo"], row["codigo_barras"] if "codigo_barras" in row.keys() else "", codigo)
+        return {"ok": True, "tabla": tabla, "id": row["id"], "codigo": row["codigo"], "codigo_barras": codigo}
 
 
 @app.post("/api/peticiones/{numero}/atender")
